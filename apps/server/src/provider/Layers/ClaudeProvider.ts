@@ -1,3 +1,4 @@
+import * as NodeOS from "node:os";
 import {
   type ClaudeSettings,
   type ModelCapabilities,
@@ -481,7 +482,7 @@ function claudeAuthMetadata(input: {
 
 // ── SDK capability probe ────────────────────────────────────────────
 
-const CAPABILITIES_PROBE_TIMEOUT_MS = 8_000;
+const CAPABILITIES_PROBE_TIMEOUT_MS = 20_000;
 
 function nonEmptyProbeString(value: string): string | undefined {
   const candidate = value.trim();
@@ -598,6 +599,7 @@ const probeClaudeCapabilities = (
         options: {
           persistSession: false,
           pathToClaudeCodeExecutable: claudeSettings.binaryPath,
+          cwd: NodeOS.tmpdir(),
           abortController: abort,
           settingSources: ["user", "project", "local"],
           allowedTools: [],
