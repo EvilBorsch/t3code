@@ -4,8 +4,8 @@
 > document for **everything** on `fix-claude` that differs from `origin/main`, so another
 > human/LLM can continue without rediscovering intent from scattered commits.
 
-**Sync status (at time of writing):** branch includes a merge of `origin/main` and is
-**0 commits behind** / **N commits ahead**. Re-check with:
+**Sync status (at time of writing):** **3 commits behind** / **6 commits ahead** of
+`origin/main`. Re-check with:
 
 ```bash
 git fetch origin main
@@ -13,6 +13,9 @@ git rev-list --left-right --count origin/main...HEAD
 git log --oneline origin/main..HEAD
 git diff --stat origin/main...HEAD
 ```
+
+Currently behind on unrelated `main` work (`#4079` dropped events, `#4017` Claude
+`CLAUDE_CONFIG_DIR`, `#4014` screenshot harness) — merge/rebase before shipping if needed.
 
 ## Commits on this branch (oldest → newest)
 
@@ -22,6 +25,8 @@ git diff --stat origin/main...HEAD
 | `85d1338c2` | Merge `origin/main` into `fix-claude`                                      |
 | `08728b5b4` | Full `t3 open` / desktop open-workspace pipeline + remaining Claude/pty/UI |
 | `14c07d7f2` | Isolate local Electron userData from Nightly + local `t3` launcher scripts |
+| `6dad6216b` | Document full `fix-claude` delta vs `origin/main` (this handoff doc)       |
+| `6db2e51e9` | macOS Nightly open fix: pending-file + `open -a`, prefer installed Nightly |
 
 ## Product themes (all intentional deltas)
 
@@ -29,7 +34,7 @@ This branch is **not** a single-feature branch. It has three themes:
 
 1. **Claude auth / provider reliability** — installed-but-logged-out Claude must not look healthy; probe must be robust; UI must block send and show server message.
 2. **Terminal / node-pty under Electron** — spawn-helper resolution through `app.asar` → `app.asar.unpacked`; attach must not hide error events.
-3. **`t3 .` / `t3 open` → desktop workspace + new draft** — CLI launches desktop with `--open-workspace` / `--new-thread`; desktop queues intent; renderer creates project + draft (pencil semantics). Includes local-dev isolation so a rebuilt desktop can run beside installed Nightly.
+3. **`t3 .` / `t3 open` → desktop workspace + new draft** — CLI launches **installed Nightly** (not local Alpha) with open-workspace intent; desktop queues intent (argv / second-instance / pending-file); renderer creates project + draft (pencil semantics). Includes local-dev isolation so a rebuilt desktop can run beside installed Nightly when explicitly opted in.
 
 ---
 
@@ -115,51 +120,78 @@ t3 open /absolute/or/relative/path
 Should:
 
 1. Resolve an absolute directory path.
-2. Find a desktop binary (Nightly → Alpha → `T3 Code`, or env override).
-3. Spawn desktop with `--open-workspace <abs> --new-thread`.
-4. If desktop already running: second-instance argv handoff + reveal window.
-5. Renderer: ensure project exists (create if missing), expand it, start a **new draft thread** (same as sidebar pencil — **not** server `thread.create` until first send).
-6. Ack pending intent so cold-start races are safe.
+2. Find a desktop binary (**Nightly → Alpha → `T3 Code`**, or env override).
+3. Hand off an open-workspace intent to that app and start a **new draft thread**.
+4. Renderer: ensure project exists (create if missing), expand it, start a **new draft thread** (same as sidebar pencil — **not** server `thread.create` until first send).
+5. Ack pending intent so cold-start races are safe.
 
 If desktop is **not** found and no server-forcing flags are set, root `t3` still falls back to starting the web server. Explicit server remains `t3 start` / `t3 serve`.
+
+### macOS Launch Services / Nightly handoff (`6db2e51e9`)
+
+**Bugs this commit fixed:**
+
+1. Local `scripts/t3-local.sh` forced `T3CODE_DESKTOP_BINARY` → rebuilt **Alpha** / `.electron-runtime`, so `t3 .` opened Alpha instead of installed Nightly.
+2. Spawning `…/Contents/MacOS/T3 Code (Nightly)` directly is fragile on macOS (helper resolution / Launch Services). Warm start via Launch Services does **not** reliably deliver CLI argv through Electron `second-instance`.
+3. A bad in-place patch of the installed `.app` (corrupt `Info.plist` / replaced `app.asar`) made Nightly unable to launch at all — always reinstall from a proper DMG, do not hand-edit the bundle.
+
+**Behavior now (macOS):**
+
+1. CLI writes `~/.t3/userdata/pending-open-workspace.json` (`T3CODE_HOME` aware).
+2. CLI activates the **`.app` bundle** with `open -a <bundle> --args --open-workspace=<abs> --new-thread` (not a bare MacOS binary spawn).
+3. Desktop consumes the pending file on:
+   - cold start (`argv` + pending-file),
+   - `second-instance`,
+   - `activate`,
+   - a long-lived poller (~750ms) so warm start works even when Nightly is already frontmost and `activate` does not fire.
+4. Stale pending files older than **120s** are ignored and deleted.
+5. Argv serialization prefers `--open-workspace=<path>` (equals form) so Chromium cannot insert switches between flag and value.
+
+Non-macOS still spawns the resolved binary with the same args; pending-file is still written as a belt-and-suspenders channel.
 
 ### End-to-end data flow
 
 ```
 t3 . / t3 open <path>
   → apps/server/src/cli/open.ts (+ desktopLaunch.ts)
-  → spawn Electron with --open-workspace --new-thread
-  → desktop main: DesktopOpenIntent (argv / second-instance)
+  → write ~/.t3/userdata/pending-open-workspace.json
+  → macOS: open -a "<Nightly>.app" --args --open-workspace=… --new-thread
+     other: spawn binary with same args
+  → desktop main: DesktopOpenIntent
+       sources: argv | second-instance | pending-file (activate + poller)
   → queue pending intent; flush via webContents IPC
   → renderer DesktopOpenWorkspaceListener
   → openWorkspaceInDesktop() → project.create? + handleNewThread(draft)
-  → ackOpenWorkspace() clears pending
+  → ackOpenWorkspace() clears in-memory pending
 ```
 
 ### Shared parsing
 
-- `packages/shared/src/desktopOpenArgs.ts` (**new**)
+- `packages/shared/src/desktopOpenArgs.ts`
   - `serializeDesktopOpenArgs` / `parseDesktopOpenWorkspaceArgs`
-  - Flags: `--open-workspace <path>`, `--new-thread`
-- `packages/shared/src/desktopOpenArgs.test.ts` (**new**)
+  - Pending-file helpers: `writePendingDesktopOpenWorkspace`, `readPendingDesktopOpenWorkspace`, `clearPendingDesktopOpenWorkspace`
+  - Flags: `--open-workspace[=]<path>`, `--new-thread`
+  - Source: `"argv" | "second-instance" | "pending-file"`
+- `packages/shared/src/desktopOpenArgs.test.ts` — equals-form, spaced-form, pending round-trip, stale expiry
 - `packages/shared/package.json` — export `./desktopOpenArgs`
 
 ### Contracts / IPC
 
 - `packages/contracts/src/ipc.ts`
-  - `DesktopOpenWorkspaceIntent` (+ schema)
+  - `DesktopOpenWorkspaceIntent` (+ schema) including `source: "pending-file"`
   - Bridge: `onOpenWorkspace`, `getPendingOpenWorkspace`, `ackOpenWorkspace`
 
 ### CLI (`apps/server`)
 
-- `apps/server/src/cli/desktopLaunch.ts` (**new**)
+- `apps/server/src/cli/desktopLaunch.ts`
   - Discovery order:
     - `T3CODE_DESKTOP_BINARY` / `T3CODE_DESKTOP_APP`
-    - macOS: `/Applications` + `~/Applications` for Nightly → Alpha → T3 Code
+    - macOS: `/Applications` + `~/Applications` for Nightly → Alpha → T3 Code (candidates carry `appBundlePath`)
     - Windows/Linux heuristics
-  - Detached spawn with open-workspace args
-- `apps/server/src/cli/desktopLaunch.test.ts` (**new**)
-- `apps/server/src/cli/open.ts` (**new**) — `t3 open [path]` (default `.`)
+  - Writes pending intent under `T3CODE_HOME/userdata` (default `~/.t3/userdata`)
+  - macOS: `open -a <appBundlePath> --args …`; else detached binary spawn
+- `apps/server/src/cli/desktopLaunch.test.ts` — Nightly preference + bundle path coverage
+- `apps/server/src/cli/open.ts` — `t3 open [path]` (default `.`)
 - `apps/server/src/bin.ts`
   - Registers `open`
   - Root `t3 [cwd]`: if **no** server flags **and** desktop binary found → `openDesktopWorkspace`; else server
@@ -167,11 +199,11 @@ t3 . / t3 open <path>
 
 ### Desktop main
 
-- `apps/desktop/src/app/DesktopOpenIntent.ts` (**new**) — parse, validate directory, queue, flush until ack/timeout, peek/ack for late React mount
+- `apps/desktop/src/app/DesktopOpenIntent.ts` — parse/validate directory, queue, consume pending-file, flush until ack/timeout, peek/ack for late React mount; `activate` + poller for macOS warm starts
 - `apps/desktop/src/app/DesktopApp.ts` — `openIntent.register` after clerk single-instance lock
 - `apps/desktop/src/main.ts` — provide layer
 - `apps/desktop/src/window/DesktopWindow.ts` — `dispatchOpenWorkspace(intent) => boolean`
-- IPC: `channels.ts`, `methods/window.ts`, `DesktopIpcHandlers.ts`, `preload.ts`
+- IPC: `channels.ts`, `methods/window.ts`, `DesktopIpcHandlers.ts`, `preload.ts` (accepts `pending-file` source)
 - Tests touched: `DesktopApplicationMenu.test.ts`, `DesktopBackendPool.test.ts`
 
 ### Desktop identity isolation (local rebuilt app vs installed Nightly)
@@ -195,37 +227,57 @@ Also: log a warning when single-instance lock is unavailable (`DesktopClerk`).
 - `apps/web/src/components/DesktopOpenWorkspaceListener.tsx` (**new**) — subscribe + drain pending on mount + ack
 - `apps/web/src/components/AppSidebarLayout.tsx` — mounts listener
 
-### Local PATH wrappers (dev smoke without a Nightly that includes open-workspace)
+### Local PATH wrappers
 
-Installed Nightly may still ignore `--open-workspace`. For local validation:
+Default local CLI wiring should open **installed Nightly**, not the Alpha electron-runtime rebuild.
 
-| Path                                | Role                                                                                                                                                                               |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/t3-local.sh`               | Sets `T3CODE_DESKTOP_BINARY` and execs rebuilt `apps/server/dist/bin.mjs`                                                                                                          |
-| `scripts/t3-code-desktop-local.mjs` | Launches rebuilt `apps/desktop/dist-electron/main.cjs` via `.electron-runtime`, patches CFBundleIdentifier to `com.t3tools.t3code.local-open`, sets `T3CODE_HOME=~/.t3-local-open` |
+| Path                                | Role                                                                                                                                                        |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/t3-local.sh`               | Resolves `REPO_ROOT` from script location; execs rebuilt `apps/server/dist/bin.mjs`; **unsets** `T3CODE_DESKTOP_BINARY` unless `T3CODE_USE_LOCAL_DESKTOP=1` |
+| `scripts/t3-code-desktop-local.mjs` | Optional local desktop launcher (`.electron-runtime` Alpha), custom bundle id + `T3CODE_HOME=~/.t3-local-open` — only when debugging desktop itself         |
 
 Typical wiring (machine-local):
 
 ```bash
-# after: vp run --filter t3 --filter @t3tools/desktop build
+# after: vp run --filter t3 build
+# (and a Nightly DMG from this branch installed into /Applications)
 ln -sf "$PWD/scripts/t3-local.sh" /opt/homebrew/bin/t3
 ```
 
-**Note:** `scripts/t3-local.sh` currently hardcodes this repo’s absolute path; adjust `REPO_ROOT` if the checkout moves.
+Opt into local Alpha desktop only when needed:
 
-Verified smoke: `t3 .` from a temp folder while Nightly is running → local app stays up, intent queued/dispatched, renderer `ack-open-workspace`, project row in `~/.t3-local-open/userdata/state.sqlite`.
+```bash
+T3CODE_USE_LOCAL_DESKTOP=1 t3 .
+```
+
+**Rebuild Nightly for Theme C desktop code** (pending-file consumer lives in the app):
+
+```bash
+node scripts/build-desktop-artifact.ts \
+  --platform mac --target dmg --arch arm64 \
+  --build-version 0.0.29-nightly.YYYYMMDD.N
+# then ditto the .app from the DMG into /Applications — do not patch Info.plist/asar in place
+```
+
+Verified smoke (post-`6db2e51e9` Nightly install):
+
+- Cold `t3 .` → Nightly process with `--open-workspace=…`, intent queued (`argv` + `pending-file`), dispatched, ack.
+- Warm `t3 .` while Nightly running → pending file consumed via poller/`activate`, dispatched with `source: pending-file`.
+- No Alpha process; `/Applications/T3 Code (Nightly).app` Info.plist remains a full dict (`CFBundleExecutable`, etc.).
 
 ---
 
 ## Important pitfalls
 
-1. **Stock Nightly/Alpha must include Theme C desktop code.** CLI alone is not enough; old apps ignore `--open-workspace`.
+1. **Stock Nightly/Alpha must include Theme C desktop code** (including pending-file). CLI alone is not enough; old apps ignore `--open-workspace` / never read the pending file.
 2. **`t3` must be on PATH.** Desktop cask does not install the CLI. Use npm/server bin or `scripts/t3-local.sh`.
 3. **Root `t3` prefers desktop** only when a desktop binary is found and no server flags are passed. CI should keep using `t3 start` / `t3 serve`.
 4. **New thread = draft** (pencil), not server `thread.create`.
 5. **Pending intent ACK** is required for cold-start IPC-before-React races — do not remove peek/ack without a replacement.
 6. **Do not reuse** server `autoBootstrapProjectFromCwd` for this feature (different semantics).
-7. **Running Nightly + local rebuild** without custom `T3CODE_DESKTOP_APP_USER_MODEL_ID` collides on Electron userData / single-instance lock.
+7. **Running Nightly + local rebuild** without custom `T3CODE_DESKTOP_APP_USER_MODEL_ID` collides on Electron userData / single-instance lock — use `T3CODE_USE_LOCAL_DESKTOP=1` only when intentional.
+8. **Never hand-edit** an installed `.app` (`Info.plist` / `app.asar`) to “hot-patch” open-workspace — that broke Nightly launches (`Unable to find helper app`). Always reinstall from a DMG/`ditto`.
+9. **macOS warm start needs pending-file** — `open -a` does not reliably deliver argv to an already-running Electron app via `second-instance`.
 
 ---
 
@@ -236,19 +288,25 @@ Verified smoke: `t3 .` from a temp folder while Nightly is running → local app
 vp run --filter t3 test -- \
   src/provider/Layers/ClaudeProvider.test.ts \
   src/terminal/NodePtyAdapter.test.ts \
-  src/terminal/Manager.test.ts \
-  src/cli/desktopLaunch.test.ts
+  src/terminal/Manager.test.ts
+
+# From apps/server (avoid full suite if it hangs in this env):
+cd apps/server && vp test run src/cli/desktopLaunch.test.ts
 
 vp run --filter @t3tools/shared test -- src/desktopOpenArgs.test.ts
+# or from packages/shared:
+cd packages/shared && vp test run src/desktopOpenArgs.test.ts
+
 vp run --filter @t3tools/web test -- src/lib/openWorkspaceIntent.test.ts
 vp run --filter @t3tools/desktop test -- src/app/DesktopEnvironment.test.ts
 
 # Manual: Claude unauthenticated → banner + send blocked
-# Manual: t3 open (desktop with this branch’s build)
+# Manual: t3 open against Nightly built from this branch
 command -v t3
 t3 open --help
 cd /some/project && t3 .
-# expect: app focuses, project appears/expands, new draft composer opens
+# expect: Nightly focuses (not Alpha), project appears/expands, new draft composer opens
+# warm: run t3 . again while Nightly is already open — same behavior via pending-file
 
 t3 start --no-browser   # explicit server still works
 ```
@@ -312,8 +370,9 @@ vp run typecheck
 
 ## Suggested follow-ups (not done on this branch)
 
-- Ship a Nightly/Alpha that includes Theme C so stock `/Applications` works with `t3 .` without local wrappers.
+- Merge/rebase onto current `origin/main` (branch is 3 commits behind).
+- Ship a Nightly/Alpha release that includes Theme C (pending-file + `open -a` path) so stock installs work without rebuilding from this checkout.
 - Install a `t3` CLI shim from the desktop installer / brew cask.
-- Deep-link (`t3code://open?path=...`) reusing `DesktopOpenIntent`.
-- Make `scripts/t3-local.sh` resolve `REPO_ROOT` relative to the script instead of a hardcoded absolute path.
+- Deep-link (`t3code://open?path=...`) reusing `DesktopOpenIntent` + pending-file.
 - Decide whether root `t3` should always prefer desktop when installed, or only `t3 open`.
+- Harden flush-until-ack so the renderer does not receive duplicate `dispatchOpenWorkspace` IPC while waiting for ack (poller can re-flush).
