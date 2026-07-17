@@ -1,6 +1,8 @@
 import type { DesktopOpenWorkspaceIntent } from "@t3tools/contracts";
 import {
+  clearPendingDesktopOpenWorkspace,
   parseDesktopOpenWorkspaceArgs,
+  readPendingDesktopOpenWorkspace,
   type DesktopOpenWorkspaceSource,
 } from "@t3tools/shared/desktopOpenArgs";
 import * as Context from "effect/Context";
@@ -15,6 +17,7 @@ import * as Scope from "effect/Scope";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
 export class DesktopOpenWorkspacePathError extends Schema.TaggedErrorClass<DesktopOpenWorkspacePathError>()(
@@ -35,11 +38,12 @@ export class DesktopOpenWorkspacePathError extends Schema.TaggedErrorClass<Deskt
 export type DesktopOpenIntentRuntimeServices =
   | DesktopWindow.DesktopWindow
   | ElectronApp.ElectronApp
+  | DesktopEnvironment.DesktopEnvironment
   | FileSystem.FileSystem
   | Path.Path;
 
 /**
- * @effect-expect-leaking DesktopWindow | ElectronApp | FileSystem | Path
+ * @effect-expect-leaking DesktopWindow | ElectronApp | DesktopEnvironment | FileSystem | Path
  */
 export class DesktopOpenIntent extends Context.Service<
   DesktopOpenIntent,
@@ -96,6 +100,7 @@ const normalizeOpenWorkspaceIntent = Effect.fn("desktop.openIntent.normalize")(f
 
 export const make = Effect.gen(function* () {
   const pendingRef = yield* Ref.make<Option.Option<DesktopOpenWorkspaceIntent>>(Option.none());
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
 
   const enqueue = Effect.fn("desktop.openIntent.enqueue")(function* (
     intent: DesktopOpenWorkspaceIntent,
@@ -153,6 +158,27 @@ export const make = Effect.gen(function* () {
     yield* enqueue(parsed);
   });
 
+  const consumePendingFile = Effect.fn("desktop.openIntent.consumePendingFile")(function* () {
+    const intent = readPendingDesktopOpenWorkspace(environment.stateDir);
+    if (!intent) {
+      return false;
+    }
+    clearPendingDesktopOpenWorkspace(environment.stateDir);
+    yield* enqueue(intent);
+    return true;
+  });
+
+  const ingestExternalOpenRequest = Effect.fn("desktop.openIntent.ingestExternal")(function* (
+    commandLine: readonly string[] | undefined,
+    source: DesktopOpenWorkspaceSource,
+  ) {
+    if (Array.isArray(commandLine)) {
+      yield* handleCommandLine(commandLine, source);
+    }
+    yield* consumePendingFile();
+    yield* flush.pipe(Effect.ignore({ log: true }));
+  });
+
   return DesktopOpenIntent.of({
     enqueue,
     handleCommandLine,
@@ -167,19 +193,32 @@ export const make = Effect.gen(function* () {
       const runPromise = Effect.runPromiseWith(context);
 
       yield* handleCommandLine(process.argv, "argv");
+      yield* consumePendingFile();
 
       yield* electronApp.on(
         "second-instance",
         (_event: unknown, commandLine: string[] | undefined) => {
-          void runPromise(
-            Effect.gen(function* () {
-              if (Array.isArray(commandLine)) {
-                yield* handleCommandLine(commandLine, "second-instance");
-              }
-              yield* flush.pipe(Effect.ignore({ log: true }));
-            }),
-          );
+          void runPromise(ingestExternalOpenRequest(commandLine, "second-instance"));
         },
+      );
+
+      // macOS Launch Services activates the existing app instead of delivering
+      // CLI argv via second-instance. Consume the pending file on activate.
+      yield* electronApp.on("activate", () => {
+        void runPromise(ingestExternalOpenRequest(undefined, "pending-file"));
+      });
+
+      // Keep polling: activate may not fire when Nightly is already frontmost.
+      yield* Effect.forkScoped(
+        Effect.gen(function* () {
+          while (true) {
+            const consumed = yield* consumePendingFile();
+            if (consumed) {
+              yield* flush.pipe(Effect.ignore({ log: true }));
+            }
+            yield* Effect.sleep("750 millis");
+          }
+        }),
       );
 
       yield* Effect.forkScoped(
@@ -187,14 +226,20 @@ export const make = Effect.gen(function* () {
           for (let attempt = 0; attempt < 120; attempt += 1) {
             const pending = yield* Ref.get(pendingRef);
             if (Option.isNone(pending)) {
-              return;
+              if (attempt >= 20) {
+                return;
+              }
+            } else {
+              yield* flush.pipe(Effect.ignore({ log: true }));
             }
-            yield* flush.pipe(Effect.ignore({ log: true }));
             yield* Effect.sleep("500 millis");
           }
-          yield* logOpenIntentWarning(
-            "timed out waiting for renderer to acknowledge open-workspace",
-          );
+          const stillPending = yield* Ref.get(pendingRef);
+          if (Option.isSome(stillPending)) {
+            yield* logOpenIntentWarning(
+              "timed out waiting for renderer to acknowledge open-workspace",
+            );
+          }
         }),
       );
     }).pipe(Effect.withSpan("desktop.openIntent.register")),

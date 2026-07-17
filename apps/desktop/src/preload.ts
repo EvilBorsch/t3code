@@ -137,7 +137,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       if (!("newThread" in intent) || typeof intent.newThread !== "boolean") return;
       if (
         !("source" in intent) ||
-        (intent.source !== "argv" && intent.source !== "second-instance")
+        (intent.source !== "argv" &&
+          intent.source !== "second-instance" &&
+          intent.source !== "pending-file")
       ) {
         return;
       }

@@ -29,6 +29,16 @@ it("resolves T3CODE_DESKTOP_BINARY first when executable", () => {
   );
 });
 
+it("includes macOS app bundle path for Nightly", () => {
+  const candidates = listDesktopBinaryCandidates({
+    platform: "darwin",
+    homeDirectory: "/Users/test",
+    env: {},
+  });
+  assert.equal(candidates[0]?.label, "T3 Code (Nightly)");
+  assert.equal(candidates[0]?.appBundlePath, "/Applications/T3 Code (Nightly).app");
+});
+
 it("returns none when no candidates are executable", () => {
   const resolved = resolveDesktopBinaryPath({
     platform: "darwin",

@@ -4,7 +4,10 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { serializeDesktopOpenArgs } from "@t3tools/shared/desktopOpenArgs";
+import {
+  serializeDesktopOpenArgs,
+  writePendingDesktopOpenWorkspace,
+} from "@t3tools/shared/desktopOpenArgs";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -44,6 +47,7 @@ export class DesktopAppLaunchError extends Schema.TaggedErrorClass<DesktopAppLau
 export type DesktopLaunchCandidate = {
   readonly binaryPath: string;
   readonly label: string;
+  readonly appBundlePath?: string;
 };
 
 const MAC_APP_NAMES = ["T3 Code (Nightly)", "T3 Code (Alpha)", "T3 Code"] as const;
@@ -62,6 +66,11 @@ const isExecutableFile = (filePath: string): boolean => {
 const macBinaryForAppBundle = (appBundlePath: string, appName: string): string =>
   NodePath.join(appBundlePath, "Contents", "MacOS", appName);
 
+const resolveDesktopStateDir = (env: NodeJS.ProcessEnv, homeDirectory: string): string => {
+  const t3Home = env.T3CODE_HOME?.trim() || NodePath.join(homeDirectory, ".t3");
+  return NodePath.join(t3Home, "userdata");
+};
+
 export function listDesktopBinaryCandidates(input: {
   readonly platform: NodeJS.Platform;
   readonly homeDirectory?: string;
@@ -72,11 +81,15 @@ export function listDesktopBinaryCandidates(input: {
   const candidates: DesktopLaunchCandidate[] = [];
   const seen = new Set<string>();
 
-  const pushCandidate = (binaryPath: string, label: string) => {
+  const pushCandidate = (binaryPath: string, label: string, appBundlePath?: string) => {
     const normalized = NodePath.resolve(binaryPath);
     if (seen.has(normalized)) return;
     seen.add(normalized);
-    candidates.push({ binaryPath: normalized, label });
+    candidates.push({
+      binaryPath: normalized,
+      label,
+      ...(appBundlePath !== undefined ? { appBundlePath: NodePath.resolve(appBundlePath) } : {}),
+    });
   };
 
   const envBinary = env.T3CODE_DESKTOP_BINARY?.trim();
@@ -87,7 +100,7 @@ export function listDesktopBinaryCandidates(input: {
   const envApp = env.T3CODE_DESKTOP_APP?.trim();
   if (envApp && input.platform === "darwin") {
     const appName = NodePath.basename(envApp, ".app");
-    pushCandidate(macBinaryForAppBundle(envApp, appName), envApp);
+    pushCandidate(macBinaryForAppBundle(envApp, appName), envApp, envApp);
   }
 
   if (input.platform === "darwin") {
@@ -95,7 +108,7 @@ export function listDesktopBinaryCandidates(input: {
     for (const root of searchRoots) {
       for (const appName of MAC_APP_NAMES) {
         const appBundlePath = NodePath.join(root, `${appName}.app`);
-        pushCandidate(macBinaryForAppBundle(appBundlePath, appName), appName);
+        pushCandidate(macBinaryForAppBundle(appBundlePath, appName), appName, appBundlePath);
       }
     }
   } else if (input.platform === "win32") {
@@ -139,13 +152,15 @@ export const launchDesktopApp = Effect.fn("launchDesktopApp")(function* (input: 
   readonly newThread?: boolean;
   readonly homeDirectory?: string;
   readonly env?: NodeJS.ProcessEnv;
-  readonly spawnDetached?: (binaryPath: string, args: readonly string[]) => void;
+  readonly spawnDetached?: (candidate: DesktopLaunchCandidate, args: readonly string[]) => void;
 }) {
   const platform = yield* HostProcessPlatform;
+  const homeDirectory = input.homeDirectory ?? NodeOS.homedir();
+  const env = input.env ?? process.env;
   const resolveInput = {
     platform,
-    ...(input.homeDirectory !== undefined ? { homeDirectory: input.homeDirectory } : {}),
-    ...(input.env !== undefined ? { env: input.env } : {}),
+    homeDirectory,
+    env,
   };
   const resolved = resolveDesktopBinaryPath(resolveInput);
   if (Option.isNone(resolved)) {
@@ -160,10 +175,34 @@ export const launchDesktopApp = Effect.fn("launchDesktopApp")(function* (input: 
     workspaceRoot: input.workspaceRoot,
     ...(input.newThread !== undefined ? { newThread: input.newThread } : {}),
   });
+
+  // macOS Launch Services does not deliver CLI argv to an already-running app.
+  // Direct Contents/MacOS spawns also crash with "Unable to find helper app" while
+  // Nightly is open. Write a pending intent file and `open -a` to activate the
+  // installed app so desktop can consume it on activate/startup.
+  writePendingDesktopOpenWorkspace({
+    stateDir: resolveDesktopStateDir(env, homeDirectory),
+    workspaceRoot: input.workspaceRoot,
+    ...(input.newThread !== undefined ? { newThread: input.newThread } : {}),
+  });
+
   const spawnDetached =
     input.spawnDetached ??
-    ((binaryPath, spawnArgs) => {
-      const child = NodeChildProcess.spawn(binaryPath, [...spawnArgs], {
+    ((candidate, spawnArgs) => {
+      if (platform === "darwin" && candidate.appBundlePath) {
+        const child = NodeChildProcess.spawn(
+          "open",
+          ["-a", candidate.appBundlePath, "--args", ...spawnArgs],
+          {
+            detached: true,
+            stdio: "ignore",
+          },
+        );
+        child.unref();
+        return;
+      }
+
+      const child = NodeChildProcess.spawn(candidate.binaryPath, [...spawnArgs], {
         detached: true,
         stdio: "ignore",
       });
@@ -172,7 +211,7 @@ export const launchDesktopApp = Effect.fn("launchDesktopApp")(function* (input: 
 
   yield* Effect.try({
     try: () => {
-      spawnDetached(resolved.value.binaryPath, args);
+      spawnDetached(resolved.value, args);
     },
     catch: (cause) =>
       new DesktopAppLaunchError({

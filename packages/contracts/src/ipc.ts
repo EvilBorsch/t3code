@@ -185,7 +185,7 @@ export interface DesktopAppBranding {
   displayName: string;
 }
 
-export type DesktopOpenWorkspaceSource = "argv" | "second-instance";
+export type DesktopOpenWorkspaceSource = "argv" | "second-instance" | "pending-file";
 
 export interface DesktopOpenWorkspaceIntent {
   workspaceRoot: string;
@@ -196,7 +196,7 @@ export interface DesktopOpenWorkspaceIntent {
 export const DesktopOpenWorkspaceIntentSchema = Schema.Struct({
   workspaceRoot: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
   newThread: Schema.Boolean,
-  source: Schema.Literals(["argv", "second-instance"]),
+  source: Schema.Literals(["argv", "second-instance", "pending-file"]),
 });
 
 export const DesktopAppBrandingSchema = Schema.Struct({
