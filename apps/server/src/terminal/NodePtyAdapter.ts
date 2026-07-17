@@ -23,39 +23,47 @@ export class NodePtyModuleLoadError extends Schema.TaggedErrorClass<NodePtyModul
 }
 
 type NodePtyModuleLoader = () => Promise<typeof import("node-pty")>;
+type NodePtyPackageJsonResolver = () => string;
 
 let didEnsureSpawnHelperExecutable = false;
 
-const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
-  const requireForNodePty = NodeModule.createRequire(import.meta.url);
-  const path = yield* Path.Path;
-  const fs = yield* FileSystem.FileSystem;
-  const platform = yield* HostProcessPlatform;
-  const architecture = yield* HostProcessArchitecture;
+const defaultNodePtyPackageJsonResolver: NodePtyPackageJsonResolver = () =>
+  NodeModule.createRequire(import.meta.url).resolve("node-pty/package.json");
 
-  const packageJsonPath = requireForNodePty.resolve("node-pty/package.json");
-  const packageDir = path.dirname(packageJsonPath);
-  const candidates = [
-    path.join(packageDir, "build", "Release", "spawn-helper"),
-    path.join(packageDir, "build", "Debug", "spawn-helper"),
-    path.join(packageDir, "prebuilds", `${platform}-${architecture}`, "spawn-helper"),
-  ];
+const resolveNodePtySpawnHelperPath = (resolvePackageJson: NodePtyPackageJsonResolver) =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    const platform = yield* HostProcessPlatform;
+    const architecture = yield* HostProcessArchitecture;
 
-  for (const candidate of candidates) {
-    if (yield* fs.exists(candidate)) {
-      return candidate;
+    const packageDir = path
+      .dirname(resolvePackageJson())
+      .replace(/(^|[/\\])app\.asar(?=($|[/\\]))/, "$1app.asar.unpacked")
+      .replace(/(^|[/\\])node_modules\.asar(?=($|[/\\]))/, "$1node_modules.asar.unpacked");
+    const candidates = [
+      path.join(packageDir, "build", "Release", "spawn-helper"),
+      path.join(packageDir, "build", "Debug", "spawn-helper"),
+      path.join(packageDir, "prebuilds", `${platform}-${architecture}`, "spawn-helper"),
+    ];
+
+    for (const candidate of candidates) {
+      if (yield* fs.exists(candidate)) {
+        return candidate;
+      }
     }
-  }
-  return null;
-}).pipe(Effect.orElseSucceed(() => null));
+    return null;
+  }).pipe(Effect.orElseSucceed(() => null));
 
-const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
+const ensureNodePtySpawnHelperExecutable = Effect.fn(function* (
+  resolvePackageJson: NodePtyPackageJsonResolver,
+) {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;
   if (platform === "win32") return;
   if (didEnsureSpawnHelperExecutable) return;
 
-  const helperPath = yield* resolveNodePtySpawnHelperPath;
+  const helperPath = yield* resolveNodePtySpawnHelperPath(resolvePackageJson);
   if (!helperPath) return;
   didEnsureSpawnHelperExecutable = true;
 
@@ -112,6 +120,7 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
 
 export const make = Effect.fn("NodePtyAdapter.make")(function* (
   loadNodePtyModule: NodePtyModuleLoader = () => import("node-pty"),
+  resolvePackageJson: NodePtyPackageJsonResolver = defaultNodePtyPackageJsonResolver,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -129,7 +138,7 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* (
   }).pipe(Effect.orDie);
 
   const ensureNodePtySpawnHelperExecutableCached = yield* Effect.cached(
-    ensureNodePtySpawnHelperExecutable().pipe(
+    ensureNodePtySpawnHelperExecutable(resolvePackageJson).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(HostProcessPlatform, platform),

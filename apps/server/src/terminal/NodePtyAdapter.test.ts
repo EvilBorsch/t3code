@@ -4,7 +4,9 @@ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/ho
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
 import * as NodePtyAdapter from "./NodePtyAdapter.ts";
@@ -82,6 +84,56 @@ it.effect("reports native module load failures as structured startup defects", (
         NodeServices.layer,
         Layer.succeed(HostProcessPlatform, "win32"),
         Layer.succeed(HostProcessArchitecture, "x64"),
+      ),
+    ),
+  ),
+);
+
+it.effect("makes the unpacked Electron spawn helper executable", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-node-pty-" });
+    const packageJsonPath = path.join(
+      tempDir,
+      "app.asar",
+      "node_modules",
+      "node-pty",
+      "package.json",
+    );
+    const helperPath = path.join(
+      tempDir,
+      "app.asar.unpacked",
+      "node_modules",
+      "node-pty",
+      "build",
+      "Release",
+      "spawn-helper",
+    );
+    yield* fs.makeDirectory(path.dirname(helperPath), { recursive: true });
+    yield* fs.writeFileString(helperPath, "spawn helper");
+    yield* fs.chmod(helperPath, 0o644);
+
+    const adapter = yield* NodePtyAdapter.make(
+      () => import("node-pty"),
+      () => packageJsonPath,
+    );
+    yield* adapter.spawn({
+      shell: "/bin/sh",
+      cwd: tempDir,
+      cols: 80,
+      rows: 24,
+      env: {},
+    });
+
+    const helperInfo = yield* fs.stat(helperPath);
+    assert.equal(helperInfo.mode & 0o777, 0o755);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(HostProcessPlatform, "darwin"),
+        Layer.succeed(HostProcessArchitecture, "arm64"),
       ),
     ),
   ),

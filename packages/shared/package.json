@@ -135,6 +135,10 @@
       "types": "./src/cliArgs.ts",
       "import": "./src/cliArgs.ts"
     },
+    "./desktopOpenArgs": {
+      "types": "./src/desktopOpenArgs.ts",
+      "import": "./src/desktopOpenArgs.ts"
+    },
     "./path": {
       "types": "./src/path.ts",
       "import": "./src/path.ts"

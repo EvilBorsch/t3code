@@ -2,15 +2,19 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { Command } from "effect/unstable/cli";
 import * as CliError from "effect/unstable/cli/CliError";
 
 import * as NetService from "@t3tools/shared/Net";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import packageJson from "../package.json" with { type: "json" };
 import { authCommand } from "./cli/auth.ts";
 import { connectCommand } from "./cli/connect.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
-import { sharedServerCommandFlags } from "./cli/config.ts";
+import { type CliServerFlags, sharedServerCommandFlags } from "./cli/config.ts";
+import { resolveDesktopBinaryPath } from "./cli/desktopLaunch.ts";
+import { openCommand, openDesktopWorkspace } from "./cli/open.ts";
 import { projectCommand } from "./cli/project.ts";
 import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 
@@ -38,11 +42,38 @@ const connectUnavailableCommand = Command.make("connect").pipe(
   ),
 );
 
+const hasExplicitServerFlags = (flags: CliServerFlags): boolean =>
+  Option.isSome(flags.mode ?? Option.none()) ||
+  Option.isSome(flags.port ?? Option.none()) ||
+  Option.isSome(flags.host ?? Option.none()) ||
+  Option.isSome(flags.baseDir ?? Option.none()) ||
+  Option.isSome(flags.devUrl ?? Option.none()) ||
+  Option.isSome(flags.noBrowser ?? Option.none()) ||
+  Option.isSome(flags.bootstrapFd ?? Option.none()) ||
+  Option.isSome(flags.autoBootstrapProjectFromCwd ?? Option.none()) ||
+  Option.isSome(flags.logWebSocketEvents ?? Option.none()) ||
+  Option.isSome(flags.tailscaleServeEnabled ?? Option.none()) ||
+  Option.isSome(flags.tailscaleServePort ?? Option.none());
+
+const runRootCommand = (flags: CliServerFlags) =>
+  Effect.gen(function* () {
+    if (!hasExplicitServerFlags(flags)) {
+      const platform = yield* HostProcessPlatform;
+      if (Option.isSome(resolveDesktopBinaryPath({ platform }))) {
+        return yield* openDesktopWorkspace(Option.getOrElse(flags.cwd ?? Option.none(), () => "."));
+      }
+    }
+    return yield* runServerCommand(flags);
+  });
+
 export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
   Command.make("t3", { ...sharedServerCommandFlags }).pipe(
-    Command.withDescription("Run the T3 Code server."),
-    Command.withHandler((flags) => runServerCommand(flags)),
+    Command.withDescription(
+      "Open the T3 Code desktop app for a workspace, or run the server when desktop is unavailable.",
+    ),
+    Command.withHandler((flags) => runRootCommand(flags)),
     Command.withSubcommands([
+      openCommand,
       startCommand,
       serveCommand,
       authCommand,

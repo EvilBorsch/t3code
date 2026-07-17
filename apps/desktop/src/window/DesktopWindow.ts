@@ -15,7 +15,12 @@ import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
+import {
+  MENU_ACTION_CHANNEL,
+  OPEN_WORKSPACE_CHANNEL,
+  WINDOW_FULLSCREEN_STATE_CHANNEL,
+} from "../ipc/channels.ts";
+import type { DesktopOpenWorkspaceIntent } from "@t3tools/contracts";
 import * as PreviewManager from "../preview/Manager.ts";
 
 const TITLEBAR_HEIGHT = 40;
@@ -76,6 +81,9 @@ export class DesktopWindow extends Context.Service<
     // produce a stranded window pointing at nothing.
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
+    readonly dispatchOpenWorkspace: (
+      intent: DesktopOpenWorkspaceIntent,
+    ) => Effect.Effect<boolean, DesktopWindowError>;
     readonly syncAppearance: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
@@ -618,6 +626,32 @@ export const make = Effect.gen(function* () {
       }
 
       send();
+    }),
+    dispatchOpenWorkspace: Effect.fn("desktop.window.dispatchOpenWorkspace")(function* (intent) {
+      yield* Effect.annotateCurrentSpan({
+        workspaceRoot: intent.workspaceRoot,
+        newThread: intent.newThread,
+        source: intent.source,
+      });
+      const existingWindow = yield* focusedMainWindow;
+      if (Option.isNone(existingWindow) && !(yield* Ref.get(backendReadyRef))) {
+        return false;
+      }
+      const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
+
+      const send = () => {
+        if (targetWindow.isDestroyed()) return;
+        targetWindow.webContents.send(OPEN_WORKSPACE_CHANNEL, intent);
+        void runPromise(electronWindow.reveal(targetWindow));
+      };
+
+      if (targetWindow.webContents.isLoadingMainFrame()) {
+        targetWindow.webContents.once("did-finish-load", send);
+        return true;
+      }
+
+      send();
+      return true;
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;

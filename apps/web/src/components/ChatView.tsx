@@ -3903,6 +3903,17 @@ function ChatViewContent(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
+    const selectedProviderStatus = providerStatuses.find(
+      (status) => status.instanceId === ctxSelectedModelSelection.instanceId,
+    );
+    if (selectedProviderStatus?.auth.status === "unauthenticated") {
+      setThreadError(
+        activeThread.id,
+        selectedProviderStatus.message ??
+          `${selectedProviderStatus.displayName} is not authenticated. Sign in via the CLI and try again.`,
+      );
+      return;
+    }
     const promptForSend = promptRef.current;
     const {
       trimmedPrompt: trimmed,

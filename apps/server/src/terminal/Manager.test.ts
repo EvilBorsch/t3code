@@ -1536,6 +1536,26 @@ it.layer(
       }),
   );
 
+  it.effect("keeps startup errors that are not represented by the attach snapshot", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      ptyAdapter.spawnFailures.push(
+        ...Array.from({ length: 20 }, () => new Error("posix_spawnp failed.")),
+      );
+      const attachEvents = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const unsubscribe = yield* manager.attachStream(openInput(), (event) =>
+        Ref.update(attachEvents, (events) => [...events, event]),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      const events = yield* Ref.get(attachEvents);
+      expect(events).toMatchObject([
+        { type: "snapshot", snapshot: { status: "error" } },
+        { type: "error", message: expect.stringContaining("Failed to spawn PTY process") },
+      ]);
+    }),
+  );
+
   it.effect("buffers attach output delivered during the initial snapshot callback", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {

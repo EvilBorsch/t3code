@@ -185,6 +185,20 @@ export interface DesktopAppBranding {
   displayName: string;
 }
 
+export type DesktopOpenWorkspaceSource = "argv" | "second-instance";
+
+export interface DesktopOpenWorkspaceIntent {
+  workspaceRoot: string;
+  newThread: boolean;
+  source: DesktopOpenWorkspaceSource;
+}
+
+export const DesktopOpenWorkspaceIntentSchema = Schema.Struct({
+  workspaceRoot: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
+  newThread: Schema.Boolean,
+  source: Schema.Literals(["argv", "second-instance"]),
+});
+
 export const DesktopAppBrandingSchema = Schema.Struct({
   baseName: Schema.String,
   stageLabel: DesktopAppStageLabelSchema,
@@ -996,6 +1010,9 @@ export interface DesktopBridge {
   onMenuAction: (listener: (action: string) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
+  onOpenWorkspace: (listener: (intent: DesktopOpenWorkspaceIntent) => void) => () => void;
+  getPendingOpenWorkspace: () => Promise<DesktopOpenWorkspaceIntent | null>;
+  ackOpenWorkspace: () => Promise<void>;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;

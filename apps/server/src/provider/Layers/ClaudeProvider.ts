@@ -22,6 +22,7 @@ import {
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
+  type AccountInfo as ClaudeAccountInfo,
   query as claudeQuery,
   type SlashCommand as ClaudeSlashCommand,
   type SDKUserMessage,
@@ -490,11 +491,29 @@ function nonEmptyProbeString(value: string): string | undefined {
 }
 
 type ClaudeCapabilitiesProbe = {
+  readonly authenticated: boolean;
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 };
+
+function isClaudeAccountAuthenticated(account: ClaudeAccountInfo): boolean {
+  for (const value of [
+    account.email,
+    account.organization,
+    account.subscriptionType,
+    account.tokenSource,
+    account.apiKeySource,
+  ]) {
+    const normalized = value?.trim().toLowerCase();
+    if (normalized && normalized !== "none") {
+      return true;
+    }
+  }
+
+  return account.apiProvider !== undefined && account.apiProvider !== "firstParty";
+}
 
 function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
@@ -608,17 +627,12 @@ const probeClaudeCapabilities = (
         },
       });
       const init = await q.initializationResult();
-      const account = init.account as
-        | {
-            readonly email?: string;
-            readonly subscriptionType?: string;
-            readonly tokenSource?: string;
-          }
-        | undefined;
+      const account = init.account;
       return {
-        email: account?.email,
-        subscriptionType: account?.subscriptionType,
-        tokenSource: account?.tokenSource,
+        authenticated: isClaudeAccountAuthenticated(account),
+        email: account.email,
+        subscriptionType: account.subscriptionType,
+        tokenSource: account.tokenSource,
         slashCommands: parseClaudeInitializationCommands(init.commands),
       } satisfies ClaudeCapabilitiesProbe;
     });
@@ -790,6 +804,23 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         status: "warning",
         auth: { status: "unknown" },
         message: "Could not verify Claude authentication status from initialization result.",
+      },
+    });
+  }
+
+  if (!capabilities.authenticated) {
+    return buildServerProvider({
+      presentation: CLAUDE_PRESENTATION,
+      enabled: claudeSettings.enabled,
+      checkedAt,
+      models,
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message:
+          "Claude is not authenticated. Run `claude auth login` in a terminal and try again.",
       },
     });
   }

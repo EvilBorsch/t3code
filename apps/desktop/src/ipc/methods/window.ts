@@ -2,6 +2,7 @@ import {
   ContextMenuItemSchema,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
+  DesktopOpenWorkspaceIntentSchema,
   DesktopThemeSchema,
   PickFolderOptionsSchema,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
@@ -14,6 +15,7 @@ import * as Schema from "effect/Schema";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import * as DesktopOpenIntent from "../../app/DesktopOpenIntent.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
@@ -266,5 +268,25 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
     const shell = yield* ElectronShell.ElectronShell;
     return yield* shell.openExternal(url);
+  }),
+});
+
+export const getPendingOpenWorkspace = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.GET_PENDING_OPEN_WORKSPACE_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.NullOr(DesktopOpenWorkspaceIntentSchema),
+  handler: Effect.fn("desktop.ipc.window.getPendingOpenWorkspace")(function* () {
+    const openIntent = yield* DesktopOpenIntent.DesktopOpenIntent;
+    return yield* openIntent.peek;
+  }),
+});
+
+export const ackOpenWorkspace = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.ACK_OPEN_WORKSPACE_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.ackOpenWorkspace")(function* () {
+    const openIntent = yield* DesktopOpenIntent.DesktopOpenIntent;
+    yield* openIntent.ack;
   }),
 });

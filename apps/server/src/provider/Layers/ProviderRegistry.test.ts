@@ -97,6 +97,7 @@ function booleanDescriptor(id: string, label: string) {
 }
 
 type TestClaudeCapabilities = {
+  readonly authenticated: boolean;
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
@@ -106,6 +107,7 @@ type TestClaudeCapabilities = {
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
   return () =>
     Effect.succeed({
+      authenticated: true,
       email: undefined,
       subscriptionType: undefined,
       tokenSource: undefined,
@@ -1927,6 +1929,37 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   code: 1,
                 };
               throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("returns unauthenticated when Claude initialization has no account", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({
+              authenticated: false,
+              tokenSource: "none",
+              slashCommands: [{ name: "login" }],
+            }),
+          );
+
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.auth.status, "unauthenticated");
+          assert.deepStrictEqual(status.slashCommands, []);
+          assert.strictEqual(
+            status.message,
+            "Claude is not authenticated. Run `claude auth login` in a terminal and try again.",
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              if (args.join(" ") === "--version") {
+                return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              }
+              throw new Error(`Unexpected args: ${args.join(" ")}`);
             }),
           ),
         ),

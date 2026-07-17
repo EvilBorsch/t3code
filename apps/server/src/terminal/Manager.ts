@@ -393,6 +393,9 @@ function isDuplicateAttachSnapshotEvent(
   event: TerminalEvent,
   initialSnapshot: TerminalSessionSnapshot,
 ) {
+  if (event.type === "error") {
+    return false;
+  }
   return typeof event.sequence === "number" && typeof initialSnapshot.sequence === "number"
     ? event.sequence <= initialSnapshot.sequence
     : event.type === "started" &&

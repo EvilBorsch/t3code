@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopOpenWorkspaceIntent,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
@@ -129,6 +130,27 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.WINDOW_FULLSCREEN_STATE_CHANNEL, wrappedListener);
     };
   },
+  onOpenWorkspace: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, intent: unknown) => {
+      if (typeof intent !== "object" || intent === null) return;
+      if (!("workspaceRoot" in intent) || typeof intent.workspaceRoot !== "string") return;
+      if (!("newThread" in intent) || typeof intent.newThread !== "boolean") return;
+      if (
+        !("source" in intent) ||
+        (intent.source !== "argv" && intent.source !== "second-instance")
+      ) {
+        return;
+      }
+      listener(intent as DesktopOpenWorkspaceIntent);
+    };
+
+    ipcRenderer.on(IpcChannels.OPEN_WORKSPACE_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.OPEN_WORKSPACE_CHANNEL, wrappedListener);
+    };
+  },
+  getPendingOpenWorkspace: () => ipcRenderer.invoke(IpcChannels.GET_PENDING_OPEN_WORKSPACE_CHANNEL),
+  ackOpenWorkspace: () => ipcRenderer.invoke(IpcChannels.ACK_OPEN_WORKSPACE_CHANNEL),
   getUpdateState: () => ipcRenderer.invoke(IpcChannels.UPDATE_GET_STATE_CHANNEL),
   setUpdateChannel: (channel) =>
     ipcRenderer.invoke(IpcChannels.UPDATE_SET_CHANNEL_CHANNEL, channel),
