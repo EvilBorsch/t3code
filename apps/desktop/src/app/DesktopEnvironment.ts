@@ -156,8 +156,23 @@ const make = Effect.fn("desktop.environment.make")(function* (
   });
   const displayName = branding.displayName;
   const stateDir = path.join(baseDir, isDevelopment ? "dev" : "userdata");
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const defaultAppUserModelId = isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code";
+  const appUserModelId = Option.getOrElse(
+    config.appUserModelIdOverride,
+    () => defaultAppUserModelId,
+  );
+  // Custom app ids (local open tooling) must not share Electron userData with the
+  // installed Nightly/Alpha instance — requestSingleInstanceLock keys off that path.
+  const usesCustomAppIdentity = appUserModelId !== defaultAppUserModelId;
+  const defaultUserDataDirName = isDevelopment ? "t3code-dev" : "t3code";
+  const userDataDirName = usesCustomAppIdentity
+    ? appUserModelId.replaceAll(".", "-")
+    : defaultUserDataDirName;
+  const legacyUserDataDirName = usesCustomAppIdentity
+    ? userDataDirName
+    : isDevelopment
+      ? "T3 Code (Dev)"
+      : "T3 Code (Alpha)";
   const resourcesPath = input.resourcesPath;
 
   return DesktopEnvironment.of({
@@ -196,9 +211,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     otlpExportIntervalMs: config.otlpExportIntervalMs,
     branding,
     displayName,
-    appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
-    ),
+    appUserModelId,
     linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
     linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
     userDataDirName,

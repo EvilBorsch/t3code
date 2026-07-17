@@ -106,6 +106,8 @@ describe("DesktopEnvironment", () => {
       );
 
       assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev.local");
+      assert.equal(environment.userDataDirName, "com-t3tools-t3code-dev-local");
+      assert.equal(environment.legacyUserDataDirName, "com-t3tools-t3code-dev-local");
     }),
   );
 

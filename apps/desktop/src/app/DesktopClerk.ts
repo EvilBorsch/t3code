@@ -114,6 +114,9 @@ export const make = Effect.gen(function* () {
       const runPromise = Effect.runPromiseWith(context);
 
       if (!(yield* electronApp.requestSingleInstanceLock)) {
+        yield* Effect.logWarning(
+          "single-instance lock unavailable; quitting duplicate process",
+        ).pipe(Effect.annotateLogs({ component: "desktop-clerk" }));
         yield* electronApp.quit;
         return yield* Effect.interrupt;
       }

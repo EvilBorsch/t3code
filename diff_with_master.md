@@ -221,7 +221,11 @@ vp run --filter @t3tools/web test src/lib/openWorkspaceIntent.test.ts
 ### Modified
 
 - `apps/desktop/src/app/DesktopApp.ts`
+- `apps/desktop/src/app/DesktopEnvironment.ts` (custom app id → isolated Electron userData)
+- `apps/desktop/src/app/DesktopEnvironment.test.ts`
+- `apps/desktop/src/app/DesktopClerk.ts` (log when single-instance lock fails)
 - `apps/desktop/src/main.ts`
+- `scripts/t3-local.sh` / `scripts/t3-code-desktop-local.mjs` (local PATH wrappers for rebuilt desktop)
 - `apps/desktop/src/window/DesktopWindow.ts`
 - `apps/desktop/src/window/DesktopApplicationMenu.test.ts`
 - `apps/desktop/src/backend/DesktopBackendPool.test.ts`
@@ -242,6 +246,28 @@ vp run --filter @t3tools/web test src/lib/openWorkspaceIntent.test.ts
 - `apps/web/src/components/chat/ProviderStatusBanner.tsx`
 - `packages/contracts/src/ipc.ts`
 - `packages/shared/package.json`
+
+## Local validation without a Nightly that includes open-workspace
+
+Installed Nightly may still lack `--open-workspace`. For local smoke tests:
+
+1. Rebuild: `vp run --filter t3 --filter @t3tools/desktop build`
+2. Point `t3` at the local launcher:
+   - `/opt/homebrew/bin/t3` → `scripts/t3-local.sh`
+   - which sets `T3CODE_DESKTOP_BINARY` → `scripts/t3-code-desktop-local.mjs`
+3. That launcher patches the local `.electron-runtime` Alpha.app bundle id to
+   `com.t3tools.t3code.local-open` and sets `T3CODE_DESKTOP_APP_USER_MODEL_ID` /
+   `T3CODE_HOME=~/.t3-local-open`.
+
+**Pitfall fixed here:** desktop `setPath("userData")` previously always pointed at
+`~/Library/Application Support/t3code`, so a running Nightly held
+`requestSingleInstanceLock` and the local rebuild quit immediately (`before-quit`,
+exit 130). Now a **custom** `T3CODE_DESKTOP_APP_USER_MODEL_ID` (≠ default) isolates
+Electron userData to a matching dir name (e.g. `com-t3tools-t3code-local-open`).
+
+Verified: `t3 .` from `/tmp/t3-open-smoke2` while Nightly is running → local app
+stays up, queues/dispatches intent, renderer `ack-open-workspace`, project row
+created under `~/.t3-local-open/userdata/state.sqlite`.
 
 ## Suggested follow-ups (not done here)
 
