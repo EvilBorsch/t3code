@@ -1,95 +1,135 @@
 # Diff vs `origin/main` (branch `fix-claude`)
 
-> Repo default branch is **`main`** (not `master`). This document describes the full delta of `fix-claude` relative to `origin/main`, including both already-committed and newly committed work on this branch.
->
-> Purpose: give another LLM enough context to continue safely without rediscovering intent from scattered diffs.
+> Default branch is **`main`** (there is no `master` remote). This file is the full handoff
+> document for **everything** on `fix-claude` that differs from `origin/main`, so another
+> human/LLM can continue without rediscovering intent from scattered commits.
 
-## High-level goals
+**Sync status (at time of writing):** branch includes a merge of `origin/main` and is
+**0 commits behind** / **N commits ahead**. Re-check with:
 
-This branch has **two independent product themes**:
+```bash
+git fetch origin main
+git rev-list --left-right --count origin/main...HEAD
+git log --oneline origin/main..HEAD
+git diff --stat origin/main...HEAD
+```
 
-1. **Claude auth / provider reliability** — stop treating an installed-but-logged-out Claude CLI as healthy; surface auth errors in UI; harden capability probe caching/timeouts; fix node-pty spawn-helper resolution inside Electron asar.
-2. **`t3 .` → open desktop app workspace** — CLI command that launches the installed T3 Code desktop app for a folder and starts a **new draft thread** (pencil-button semantics), including second-instance handoff when the app is already running.
+## Commits on this branch (oldest → newest)
 
-There is also a merge commit of latest `origin/main` into this branch.
+| Commit      | Summary                                                                    |
+| ----------- | -------------------------------------------------------------------------- |
+| `2c7df9070` | `Fix claude` — first Claude probe hardening (TTL on failure, timeout, cwd) |
+| `85d1338c2` | Merge `origin/main` into `fix-claude`                                      |
+| `08728b5b4` | Full `t3 open` / desktop open-workspace pipeline + remaining Claude/pty/UI |
+| `14c07d7f2` | Isolate local Electron userData from Nightly + local `t3` launcher scripts |
 
-## Branch / commit map
+## Product themes (all intentional deltas)
 
-| Commit / state                  | What                                                                                                      |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `2c7df9070` `Fix claude`        | First Claude probe fixes (cache TTL on failure, longer timeout, probe `cwd`)                              |
-| `85d1338c2` merge `origin/main` | Sync with latest main                                                                                     |
-| _(this commit)_                 | Rest of Claude auth UX + terminal/pty fixes + full `t3 open` / desktop open-workspace pipeline + this doc |
+This branch is **not** a single-feature branch. It has three themes:
 
-## Theme A — Claude / provider / terminal
+1. **Claude auth / provider reliability** — installed-but-logged-out Claude must not look healthy; probe must be robust; UI must block send and show server message.
+2. **Terminal / node-pty under Electron** — spawn-helper resolution through `app.asar` → `app.asar.unpacked`; attach must not hide error events.
+3. **`t3 .` / `t3 open` → desktop workspace + new draft** — CLI launches desktop with `--open-workspace` / `--new-thread`; desktop queues intent; renderer creates project + draft (pencil semantics). Includes local-dev isolation so a rebuilt desktop can run beside installed Nightly.
+
+---
+
+## Theme A — Claude auth / capability probe
 
 ### Problem
 
-Claude could appear available even when not authenticated. Capability probe failures could be cached. Capability probe could hang / run in a bad cwd. Terminal attach could drop useful error events. `node-pty` spawn-helper lookup broke under Electron `app.asar` packaging.
+- Claude CLI could be installed but unauthenticated; T3 still treated the provider as usable.
+- Capability probe failures could be cached for the full TTL, delaying recovery.
+- Probe could hang / run in a bad working directory (server cwd).
+- UI banner used generic copy even when the server already sent a specific message.
+- Send path did not hard-block unauthenticated providers.
 
-### Files (server)
+### Behavior now
 
-- `apps/server/src/provider/Drivers/ClaudeDriver.ts`
-  - Capability probe cache uses `Cache.makeWith` so **failed probes expire immediately** (`timeToLive: Duration.zero` on failure), successful probes keep TTL.
-- `apps/server/src/provider/Layers/ClaudeProvider.ts`
-  - Probe timeout raised `8s → 20s`.
-  - Probe runs with `cwd: os.tmpdir()`.
-  - Uses typed Claude SDK `AccountInfo`.
-  - New `isClaudeAccountAuthenticated(...)` — treats empty/`none` account fields as unauthenticated.
-  - Probe result includes `authenticated: boolean`.
-  - If installed but unauthenticated → provider status `error` + `auth.status: "unauthenticated"` + actionable message (`claude auth login`).
-- `apps/server/src/provider/Layers/ClaudeProvider.test.ts` (**new**)
-  - Covers auth detection / unauthenticated status mapping.
-- `apps/server/src/provider/Layers/ProviderRegistry.test.ts`
-  - Extra coverage around Claude/provider registry behavior related to these changes.
+1. Capability probe timeout: **8s → 20s**.
+2. Probe runs with **`cwd: os.tmpdir()`** (not the server process cwd).
+3. Probe uses typed Claude SDK `AccountInfo`.
+4. New `isClaudeAccountAuthenticated(account)`:
+   - looks at email / organization / subscriptionType / tokenSource / apiKeySource;
+   - empty / `"none"` (case-insensitive) do **not** count as authenticated;
+   - also treats non-`firstParty` `apiProvider` as authenticated signal.
+5. Probe result includes **`authenticated: boolean`**.
+6. If installed but `authenticated === false` → provider status:
+   - `status: "error"`
+   - `auth.status: "unauthenticated"`
+   - actionable `message`: run `claude auth login`
+7. Capabilities cache (`ClaudeDriver`): **`Cache.makeWith`** — successful probes keep TTL; **failed / empty probes expire immediately** (`Duration.zero`).
+8. Web:
+   - `ChatView` aborts send when selected provider `auth.status === "unauthenticated"` and sets thread error (prefers server `message`).
+   - `ProviderStatusBanner` prefers `status.message` over generic unauthenticated/error copy.
 
-### Files (terminal)
+### Files
 
-- `apps/server/src/terminal/NodePtyAdapter.ts`
-  - Resolves `node-pty` package dir through **asar → asar.unpacked** path rewrite.
-  - `resolvePackageJson` injected for testability.
-- `apps/server/src/terminal/NodePtyAdapter.test.ts`
-  - Tests asar unpack path + helper resolution.
-- `apps/server/src/terminal/Manager.ts`
-  - `isDuplicateAttachSnapshotEvent` **never** treats `error` events as duplicates (so attach errors still surface).
-- `apps/server/src/terminal/Manager.test.ts`
-  - Coverage for the error-event duplicate filter.
+| Path                                                       | Change                                                       |
+| ---------------------------------------------------------- | ------------------------------------------------------------ |
+| `apps/server/src/provider/Layers/ClaudeProvider.ts`        | timeout, cwd, auth detection, unauthenticated status mapping |
+| `apps/server/src/provider/Layers/ClaudeProvider.test.ts`   | **new** — probe cwd + auth mapping coverage                  |
+| `apps/server/src/provider/Drivers/ClaudeDriver.ts`         | fail-fast capability cache TTL                               |
+| `apps/server/src/provider/Layers/ProviderRegistry.test.ts` | related registry/Claude coverage                             |
+| `apps/web/src/components/ChatView.tsx`                     | block send when unauthenticated                              |
+| `apps/web/src/components/chat/ProviderStatusBanner.tsx`    | prefer server message                                        |
 
-### Files (web UI)
+---
 
-- `apps/web/src/components/ChatView.tsx`
-  - Before send: if selected provider `auth.status === "unauthenticated"`, set thread error and abort send.
-- `apps/web/src/components/chat/ProviderStatusBanner.tsx`
-  - Prefer server-provided `status.message` over generic copy for unauthenticated/error banners.
+## Theme B — Terminal / node-pty (Electron asar)
 
-## Theme B — `t3 .` / `t3 open` desktop open-workspace
+### Problem
+
+Inside packaged Electron, `node-pty` lives under `app.asar` but native `spawn-helper` is in `app.asar.unpacked`. Resolving `node-pty/package.json` without rewriting the path broke helper lookup. Separately, terminal attach treated some `error` events as duplicate snapshots and dropped them.
+
+### Behavior now
+
+1. `NodePtyAdapter` rewrites package dir:
+   - `app.asar` → `app.asar.unpacked`
+   - `node_modules.asar` → `node_modules.asar.unpacked`
+2. `resolvePackageJson` is injectable for tests.
+3. `isDuplicateAttachSnapshotEvent` **never** returns true for `event.type === "error"`.
+
+### Files
+
+| Path                                              | Change                                                   |
+| ------------------------------------------------- | -------------------------------------------------------- |
+| `apps/server/src/terminal/NodePtyAdapter.ts`      | asar rewrite + injectable package.json resolver          |
+| `apps/server/src/terminal/NodePtyAdapter.test.ts` | asar / helper resolution tests                           |
+| `apps/server/src/terminal/Manager.ts`             | error events never treated as duplicate attach snapshots |
+| `apps/server/src/terminal/Manager.test.ts`        | coverage for error-event filter                          |
+
+---
+
+## Theme C — `t3 .` / `t3 open` desktop open-workspace
 
 ### Desired UX
-
-From a terminal in a project folder:
 
 ```bash
 t3 .
 # or
 t3 open .
+# or
+t3 open /absolute/or/relative/path
 ```
 
 Should:
 
-1. Find installed desktop app (`T3 Code (Nightly)` preferred, then Alpha, then `T3 Code`).
-2. Spawn the app binary with `--open-workspace <absPath> --new-thread`.
-3. If app already running: second-instance delivers argv; window is revealed.
-4. Renderer creates project if missing, then starts a **new draft thread** (same as sidebar pencil), expands project in sidebar.
+1. Resolve an absolute directory path.
+2. Find a desktop binary (Nightly → Alpha → `T3 Code`, or env override).
+3. Spawn desktop with `--open-workspace <abs> --new-thread`.
+4. If desktop already running: second-instance argv handoff + reveal window.
+5. Renderer: ensure project exists (create if missing), expand it, start a **new draft thread** (same as sidebar pencil — **not** server `thread.create` until first send).
+6. Ack pending intent so cold-start races are safe.
 
-If desktop is **not** installed and no server-forcing flags are set, root `t3` still falls back to starting the web server (previous behavior). Explicit server path remains `t3 start` / `t3 serve`.
+If desktop is **not** found and no server-forcing flags are set, root `t3` still falls back to starting the web server. Explicit server remains `t3 start` / `t3 serve`.
 
 ### End-to-end data flow
 
 ```
 t3 . / t3 open <path>
   → apps/server/src/cli/open.ts (+ desktopLaunch.ts)
-  → spawn Electron binary with --open-workspace --new-thread
-  → desktop main parses argv / second-instance (DesktopOpenIntent)
+  → spawn Electron with --open-workspace --new-thread
+  → desktop main: DesktopOpenIntent (argv / second-instance)
   → queue pending intent; flush via webContents IPC
   → renderer DesktopOpenWorkspaceListener
   → openWorkspaceInDesktop() → project.create? + handleNewThread(draft)
@@ -100,7 +140,7 @@ t3 . / t3 open <path>
 
 - `packages/shared/src/desktopOpenArgs.ts` (**new**)
   - `serializeDesktopOpenArgs` / `parseDesktopOpenWorkspaceArgs`
-  - Flags: `--open-workspace <path>`, `--new-thread` (boolean)
+  - Flags: `--open-workspace <path>`, `--new-thread`
 - `packages/shared/src/desktopOpenArgs.test.ts` (**new**)
 - `packages/shared/package.json` — export `./desktopOpenArgs`
 
@@ -108,103 +148,123 @@ t3 . / t3 open <path>
 
 - `packages/contracts/src/ipc.ts`
   - `DesktopOpenWorkspaceIntent` (+ schema)
-  - `DesktopBridge` methods:
-    - `onOpenWorkspace`
-    - `getPendingOpenWorkspace`
-    - `ackOpenWorkspace`
-  - Keeps main’s fullscreen bridge APIs as well (merged from main).
+  - Bridge: `onOpenWorkspace`, `getPendingOpenWorkspace`, `ackOpenWorkspace`
 
 ### CLI (`apps/server`)
 
 - `apps/server/src/cli/desktopLaunch.ts` (**new**)
-  - Discover desktop binary:
-    - `T3CODE_DESKTOP_BINARY` / `T3CODE_DESKTOP_APP` overrides
+  - Discovery order:
+    - `T3CODE_DESKTOP_BINARY` / `T3CODE_DESKTOP_APP`
     - macOS: `/Applications` + `~/Applications` for Nightly → Alpha → T3 Code
     - Windows/Linux heuristics
   - Detached spawn with open-workspace args
 - `apps/server/src/cli/desktopLaunch.test.ts` (**new**)
-- `apps/server/src/cli/open.ts` (**new**)
-  - `t3 open [path]` (default `.`)
-  - Validates path is a directory, then launches desktop
+- `apps/server/src/cli/open.ts` (**new**) — `t3 open [path]` (default `.`)
 - `apps/server/src/bin.ts`
-  - Registers `open` subcommand
-  - Root `t3 [cwd]`:
-    - If **no** explicit server flags **and** desktop binary found → `openDesktopWorkspace`
-    - Else → `runServerCommand` (server)
+  - Registers `open`
+  - Root `t3 [cwd]`: if **no** server flags **and** desktop binary found → `openDesktopWorkspace`; else server
   - Server-forcing flags include: `--mode`, `--port`, `--host`, `--base-dir`, `--dev-url`, `--no-browser`, `--bootstrap-fd`, `--auto-bootstrap-project-from-cwd`, `--log-websocket-events`, `--tailscale-serve*`
 
-### Desktop main process
+### Desktop main
 
-- `apps/desktop/src/app/DesktopOpenIntent.ts` (**new**)
-  - Parse argv / second-instance commandLine
-  - Normalize path (must be directory)
-  - Pending intent queue
-  - Retry flush until renderer acks (or timeout)
-  - `peek` / `ack` for late React mount race
+- `apps/desktop/src/app/DesktopOpenIntent.ts` (**new**) — parse, validate directory, queue, flush until ack/timeout, peek/ack for late React mount
 - `apps/desktop/src/app/DesktopApp.ts` — `openIntent.register` after clerk single-instance lock
-- `apps/desktop/src/main.ts` — provide `DesktopOpenIntent.layer`
-- `apps/desktop/src/window/DesktopWindow.ts`
-  - `dispatchOpenWorkspace(intent) => boolean` (false if backend/window not ready)
-  - Sends `desktop:open-workspace`
-- `apps/desktop/src/ipc/channels.ts`
-  - `OPEN_WORKSPACE_CHANNEL`
-  - `GET_PENDING_OPEN_WORKSPACE_CHANNEL`
-  - `ACK_OPEN_WORKSPACE_CHANNEL`
-  - (also retains fullscreen channels from main)
-- `apps/desktop/src/ipc/methods/window.ts` — IPC handlers for pending/ack
-- `apps/desktop/src/ipc/DesktopIpcHandlers.ts` — register those handlers
-- `apps/desktop/src/preload.ts` — expose bridge methods
-- Tests updated: `DesktopApplicationMenu.test.ts`, `DesktopBackendPool.test.ts`
+- `apps/desktop/src/main.ts` — provide layer
+- `apps/desktop/src/window/DesktopWindow.ts` — `dispatchOpenWorkspace(intent) => boolean`
+- IPC: `channels.ts`, `methods/window.ts`, `DesktopIpcHandlers.ts`, `preload.ts`
+- Tests touched: `DesktopApplicationMenu.test.ts`, `DesktopBackendPool.test.ts`
+
+### Desktop identity isolation (local rebuilt app vs installed Nightly)
+
+**Bug:** local Electron passed `--user-data-dir=…`, but startup always `setPath("userData", ~/Library/Application Support/t3code)` — same path as Nightly → `requestSingleInstanceLock` failed → immediate `before-quit` / exit 130.
+
+**Fix:** if `T3CODE_DESKTOP_APP_USER_MODEL_ID` differs from the default (`com.t3tools.t3code` / `.dev`), Electron userData dir name becomes the id with `.` → `-` (e.g. `com-t3tools-t3code-local-open`). Legacy display-name path is not used for custom identities.
+
+Also: log a warning when single-instance lock is unavailable (`DesktopClerk`).
+
+| Path                                              | Change                                               |
+| ------------------------------------------------- | ---------------------------------------------------- |
+| `apps/desktop/src/app/DesktopEnvironment.ts`      | custom app id → isolated userData / legacy dir names |
+| `apps/desktop/src/app/DesktopEnvironment.test.ts` | asserts isolated dir names for override              |
+| `apps/desktop/src/app/DesktopClerk.ts`            | warn before quitting duplicate process               |
 
 ### Web renderer
 
-- `apps/web/src/lib/openWorkspaceIntent.ts` (**new**)
-  - Shared “ensure project + new draft thread” helper
-  - Always new thread when `intent.newThread` (CLI default true) or project newly created
+- `apps/web/src/lib/openWorkspaceIntent.ts` (**new**) — ensure project + new draft
 - `apps/web/src/lib/openWorkspaceIntent.test.ts` (**new**)
-- `apps/web/src/components/DesktopOpenWorkspaceListener.tsx` (**new**)
-  - Subscribes to `onOpenWorkspace`
-  - Also drains `getPendingOpenWorkspace` on mount (cold-start race)
-  - Waits briefly for primary environment
-  - Expands project in sidebar; toasts on failure; acks on success
+- `apps/web/src/components/DesktopOpenWorkspaceListener.tsx` (**new**) — subscribe + drain pending on mount + ack
 - `apps/web/src/components/AppSidebarLayout.tsx` — mounts listener
 
-## Important behavioral notes / pitfalls
+### Local PATH wrappers (dev smoke without a Nightly that includes open-workspace)
 
-1. **Installed Nightly/Alpha must include this desktop code.** Shipping only the CLI is not enough: old apps ignore `--open-workspace` and will just focus/open without creating a draft.
-2. **`t3` must be on PATH.** The npm package bin is `t3` (`apps/server` → `dist/bin.mjs`). Desktop cask does **not** install this CLI. Local symlink example used during development: `/opt/homebrew/bin/t3` → repo `apps/server/dist/bin.mjs`.
-3. **Root `t3` preference:** desktop-open wins only when desktop is found and no server flags are passed. CI/scripts should keep using `t3 start` / `t3 serve`.
-4. **New thread = draft**, not server `thread.create`. Matches pencil UX; thread persists after first send.
-5. **Pending intent ACK** exists because IPC push can arrive before React mounts; do not remove ack/peek without replacing that race handling.
-6. **Do not reuse** server `autoBootstrapProjectFromCwd` / welcome bootstrap for this feature — different semantics (server thread vs draft; web-mode defaults).
+Installed Nightly may still ignore `--open-workspace`. For local validation:
+
+| Path                                | Role                                                                                                                                                                               |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/t3-local.sh`               | Sets `T3CODE_DESKTOP_BINARY` and execs rebuilt `apps/server/dist/bin.mjs`                                                                                                          |
+| `scripts/t3-code-desktop-local.mjs` | Launches rebuilt `apps/desktop/dist-electron/main.cjs` via `.electron-runtime`, patches CFBundleIdentifier to `com.t3tools.t3code.local-open`, sets `T3CODE_HOME=~/.t3-local-open` |
+
+Typical wiring (machine-local):
+
+```bash
+# after: vp run --filter t3 --filter @t3tools/desktop build
+ln -sf "$PWD/scripts/t3-local.sh" /opt/homebrew/bin/t3
+```
+
+**Note:** `scripts/t3-local.sh` currently hardcodes this repo’s absolute path; adjust `REPO_ROOT` if the checkout moves.
+
+Verified smoke: `t3 .` from a temp folder while Nightly is running → local app stays up, intent queued/dispatched, renderer `ack-open-workspace`, project row in `~/.t3-local-open/userdata/state.sqlite`.
+
+---
+
+## Important pitfalls
+
+1. **Stock Nightly/Alpha must include Theme C desktop code.** CLI alone is not enough; old apps ignore `--open-workspace`.
+2. **`t3` must be on PATH.** Desktop cask does not install the CLI. Use npm/server bin or `scripts/t3-local.sh`.
+3. **Root `t3` prefers desktop** only when a desktop binary is found and no server flags are passed. CI should keep using `t3 start` / `t3 serve`.
+4. **New thread = draft** (pencil), not server `thread.create`.
+5. **Pending intent ACK** is required for cold-start IPC-before-React races — do not remove peek/ack without a replacement.
+6. **Do not reuse** server `autoBootstrapProjectFromCwd` for this feature (different semantics).
+7. **Running Nightly + local rebuild** without custom `T3CODE_DESKTOP_APP_USER_MODEL_ID` collides on Electron userData / single-instance lock.
+
+---
 
 ## How to validate
 
 ```bash
-# CLI present
+# Claude / terminal unit coverage (representative)
+vp run --filter t3 test -- \
+  src/provider/Layers/ClaudeProvider.test.ts \
+  src/terminal/NodePtyAdapter.test.ts \
+  src/terminal/Manager.test.ts \
+  src/cli/desktopLaunch.test.ts
+
+vp run --filter @t3tools/shared test -- src/desktopOpenArgs.test.ts
+vp run --filter @t3tools/web test -- src/lib/openWorkspaceIntent.test.ts
+vp run --filter @t3tools/desktop test -- src/app/DesktopEnvironment.test.ts
+
+# Manual: Claude unauthenticated → banner + send blocked
+# Manual: t3 open (desktop with this branch’s build)
 command -v t3
 t3 open --help
-
-# From a project directory, with desktop app that includes this branch’s desktop build:
-t3 .
+cd /some/project && t3 .
 # expect: app focuses, project appears/expands, new draft composer opens
 
-# Explicit server still works
-t3 start --no-browser
+t3 start --no-browser   # explicit server still works
 ```
 
-Targeted tests worth running:
+Full branch gate (before considering done):
 
 ```bash
-vp run --filter @t3tools/shared test src/desktopOpenArgs.test.ts
-vp run --filter t3 test src/cli/desktopLaunch.test.ts
-vp run --filter @t3tools/web test src/lib/openWorkspaceIntent.test.ts
-# plus ClaudeProvider / NodePtyAdapter / Manager tests touched above
+vp check
+vp run typecheck
 ```
 
-## File checklist (all branch deltas vs `origin/main`)
+---
 
-### New
+## Complete file checklist vs `origin/main`
+
+### Added
 
 - `apps/desktop/src/app/DesktopOpenIntent.ts`
 - `apps/server/src/cli/desktopLaunch.ts`
@@ -216,23 +276,24 @@ vp run --filter @t3tools/web test src/lib/openWorkspaceIntent.test.ts
 - `apps/web/src/lib/openWorkspaceIntent.test.ts`
 - `packages/shared/src/desktopOpenArgs.ts`
 - `packages/shared/src/desktopOpenArgs.test.ts`
+- `scripts/t3-code-desktop-local.mjs`
+- `scripts/t3-local.sh`
 - `diff_with_master.md` (this file)
 
 ### Modified
 
 - `apps/desktop/src/app/DesktopApp.ts`
-- `apps/desktop/src/app/DesktopEnvironment.ts` (custom app id → isolated Electron userData)
+- `apps/desktop/src/app/DesktopClerk.ts`
+- `apps/desktop/src/app/DesktopEnvironment.ts`
 - `apps/desktop/src/app/DesktopEnvironment.test.ts`
-- `apps/desktop/src/app/DesktopClerk.ts` (log when single-instance lock fails)
-- `apps/desktop/src/main.ts`
-- `scripts/t3-local.sh` / `scripts/t3-code-desktop-local.mjs` (local PATH wrappers for rebuilt desktop)
-- `apps/desktop/src/window/DesktopWindow.ts`
-- `apps/desktop/src/window/DesktopApplicationMenu.test.ts`
 - `apps/desktop/src/backend/DesktopBackendPool.test.ts`
-- `apps/desktop/src/ipc/channels.ts`
 - `apps/desktop/src/ipc/DesktopIpcHandlers.ts`
+- `apps/desktop/src/ipc/channels.ts`
 - `apps/desktop/src/ipc/methods/window.ts`
+- `apps/desktop/src/main.ts`
 - `apps/desktop/src/preload.ts`
+- `apps/desktop/src/window/DesktopApplicationMenu.test.ts`
+- `apps/desktop/src/window/DesktopWindow.ts`
 - `apps/server/src/bin.ts`
 - `apps/server/src/provider/Drivers/ClaudeDriver.ts`
 - `apps/server/src/provider/Layers/ClaudeProvider.ts`
@@ -247,31 +308,12 @@ vp run --filter @t3tools/web test src/lib/openWorkspaceIntent.test.ts
 - `packages/contracts/src/ipc.ts`
 - `packages/shared/package.json`
 
-## Local validation without a Nightly that includes open-workspace
+---
 
-Installed Nightly may still lack `--open-workspace`. For local smoke tests:
+## Suggested follow-ups (not done on this branch)
 
-1. Rebuild: `vp run --filter t3 --filter @t3tools/desktop build`
-2. Point `t3` at the local launcher:
-   - `/opt/homebrew/bin/t3` → `scripts/t3-local.sh`
-   - which sets `T3CODE_DESKTOP_BINARY` → `scripts/t3-code-desktop-local.mjs`
-3. That launcher patches the local `.electron-runtime` Alpha.app bundle id to
-   `com.t3tools.t3code.local-open` and sets `T3CODE_DESKTOP_APP_USER_MODEL_ID` /
-   `T3CODE_HOME=~/.t3-local-open`.
-
-**Pitfall fixed here:** desktop `setPath("userData")` previously always pointed at
-`~/Library/Application Support/t3code`, so a running Nightly held
-`requestSingleInstanceLock` and the local rebuild quit immediately (`before-quit`,
-exit 130). Now a **custom** `T3CODE_DESKTOP_APP_USER_MODEL_ID` (≠ default) isolates
-Electron userData to a matching dir name (e.g. `com-t3tools-t3code-local-open`).
-
-Verified: `t3 .` from `/tmp/t3-open-smoke2` while Nightly is running → local app
-stays up, queues/dispatches intent, renderer `ack-open-workspace`, project row
-created under `~/.t3-local-open/userdata/state.sqlite`.
-
-## Suggested follow-ups (not done here)
-
-- Package a desktop release / Nightly that includes open-workspace handling so stock Applications builds work with `t3 .`.
-- Optionally install a `t3` CLI shim from the desktop installer / brew cask.
-- Deep-link variant (`t3code://open?path=...`) sharing the same `DesktopOpenIntent` queue.
-- Decide whether root `t3` should always prefer desktop when installed, or only `t3 open` (current hybrid is documented above).
+- Ship a Nightly/Alpha that includes Theme C so stock `/Applications` works with `t3 .` without local wrappers.
+- Install a `t3` CLI shim from the desktop installer / brew cask.
+- Deep-link (`t3code://open?path=...`) reusing `DesktopOpenIntent`.
+- Make `scripts/t3-local.sh` resolve `REPO_ROOT` relative to the script instead of a hardcoded absolute path.
+- Decide whether root `t3` should always prefer desktop when installed, or only `t3 open`.
