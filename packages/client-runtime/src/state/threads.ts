@@ -41,6 +41,23 @@ function formatThreadError(cause: Cause.Cause<unknown>): string {
     : "Could not synchronize the thread.";
 }
 
+/**
+ * Warm IndexedDB caches resume via `afterSequence`, so a snapshot that lost
+ * its user prompt can never recover the earlier `thread.message-sent` event.
+ * Treat assistant/turn evidence without any user message as unusable.
+ */
+export function isReusableThreadDetailCache(snapshot: OrchestrationThreadDetailSnapshot): boolean {
+  const { messages, latestTurn, activities } = snapshot.thread;
+  if (messages.some((message) => message.role === "user")) {
+    return true;
+  }
+  const hasAssistantEvidence =
+    messages.some((message) => message.role === "assistant") ||
+    latestTurn !== null ||
+    activities.some((activity) => activity.turnId !== null);
+  return !hasAssistantEvidence;
+}
+
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
   threadId: ThreadIdType,
 ) {
@@ -48,7 +65,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const cache = yield* EnvironmentCacheStore;
   const snapshotLoader = yield* ThreadSnapshotLoader;
   const environmentId = supervisor.target.environmentId;
-  const cached = yield* cache.loadThread(environmentId, threadId).pipe(
+  const loadedCache = yield* cache.loadThread(environmentId, threadId).pipe(
     Effect.catch((error) =>
       Effect.logWarning("Could not load cached thread.").pipe(
         Effect.annotateLogs({
@@ -60,6 +77,36 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       ),
     ),
   );
+  const cached = yield* Option.match(loadedCache, {
+    onNone: () => Effect.succeed(Option.none<OrchestrationThreadDetailSnapshot>()),
+    onSome: (snapshot) => {
+      if (isReusableThreadDetailCache(snapshot)) {
+        return Effect.succeed(Option.some(snapshot));
+      }
+      return cache.removeThread(environmentId, threadId).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not remove a corrupt cached thread.").pipe(
+            Effect.annotateLogs({
+              environmentId,
+              threadId,
+              error: error.message,
+            }),
+          ),
+        ),
+        Effect.andThen(
+          Effect.logWarning("Discarded a corrupt warm thread cache missing user messages.").pipe(
+            Effect.annotateLogs({
+              environmentId,
+              threadId,
+              snapshotSequence: snapshot.snapshotSequence,
+              messageCount: snapshot.thread.messages.length,
+            }),
+          ),
+        ),
+        Effect.as(Option.none<OrchestrationThreadDetailSnapshot>()),
+      );
+    },
+  });
   const cachedThread = Option.map(cached, (snapshot) => snapshot.thread);
   const state = yield* SubscriptionRef.make<EnvironmentThreadState>({
     data: cachedThread,

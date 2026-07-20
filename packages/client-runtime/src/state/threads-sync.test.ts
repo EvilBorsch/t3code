@@ -1,10 +1,12 @@
 import {
   EnvironmentId,
   EventId,
+  MessageId,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationThread,
   type OrchestrationThreadDetailSnapshot,
   type OrchestrationThreadStreamItem,
@@ -254,6 +256,69 @@ const deleted = (): OrchestrationThreadStreamItem => ({
 });
 
 describe("EnvironmentThreads", () => {
+  it.effect("discards a corrupt warm cache missing user messages and cold-loads HTTP", () =>
+    Effect.gen(function* () {
+      const corruptCached: OrchestrationThread = {
+        ...BASE_THREAD,
+        messages: [
+          {
+            id: MessageId.make("assistant-1"),
+            role: "assistant",
+            text: "Done without a prompt",
+            turnId: TurnId.make("turn-1"),
+            streaming: false,
+            createdAt: "2026-04-01T00:00:01.000Z",
+            updatedAt: "2026-04-01T00:00:01.000Z",
+          },
+        ],
+        latestTurn: {
+          turnId: TurnId.make("turn-1"),
+          state: "completed",
+          requestedAt: "2026-04-01T00:00:00.000Z",
+          startedAt: "2026-04-01T00:00:00.000Z",
+          completedAt: "2026-04-01T00:00:02.000Z",
+          assistantMessageId: MessageId.make("assistant-1"),
+        },
+      };
+      const httpThread: OrchestrationThread = {
+        ...corruptCached,
+        messages: [
+          {
+            id: MessageId.make("user-1"),
+            role: "user",
+            text: "please do the work",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-04-01T00:00:00.000Z",
+            updatedAt: "2026-04-01T00:00:00.000Z",
+          },
+          ...corruptCached.messages,
+        ],
+      };
+      const harness = yield* makeHarness({
+        cached: corruptCached,
+        httpSnapshot: Option.some({ snapshotSequence: 1, thread: httpThread }),
+      });
+      yield* Queue.offer(harness.inputs, titleUpdated("Live title", 2));
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.title === "Live title" &&
+          value.data.value.messages.some((message) => message.role === "user"),
+      );
+
+      expect(
+        Option.getOrThrow(state.data).messages.some((message) => message.role === "user"),
+      ).toBe(true);
+      expect(yield* Ref.get(harness.loaderCalls)).toBeGreaterThanOrEqual(1);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(1);
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+    }),
+  );
+
   it.effect("publishes cached data immediately from a warm cache", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD });
