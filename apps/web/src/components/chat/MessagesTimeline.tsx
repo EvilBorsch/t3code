@@ -77,6 +77,7 @@ import {
   resolveTimelineMinimapTopPercent,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
+  CHANGED_FILES_DEFAULT_EXPAND_MAX,
   TIMELINE_MINIMAP_MIN_ITEMS,
   type TimelineLatestTurn,
 } from "./MessagesTimeline.logic";
@@ -132,8 +133,9 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
-  onToggleTurnFold: (turnId: TurnId) => void;
+  onToggleTurnFold: (turnId: TurnId, userMessageId?: MessageId | null) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
+  onScrollToMessage: (messageId: MessageId) => void;
 }
 
 interface TimelineRowActivityState {
@@ -217,17 +219,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
 
-  const onToggleTurnFold = useCallback((turnId: TurnId) => {
-    setExpandedTurnIds((existing) => {
-      const next = new Set(existing);
-      if (next.has(turnId)) {
-        next.delete(turnId);
-      } else {
-        next.add(turnId);
-      }
-      return next;
-    });
-  }, []);
   const onToggleWorkGroup = useCallback(
     (groupId: string, anchorElement?: HTMLElement) => {
       const anchorBottomBeforeToggle = anchorElement?.getBoundingClientRect().bottom ?? null;
@@ -317,6 +308,45 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const onScrollToMessage = useCallback(
+    (messageId: MessageId) => {
+      const rowIndex = rows.findIndex(
+        (row) => row.kind === "message" && row.message.id === messageId,
+      );
+      if (rowIndex < 0) {
+        return;
+      }
+      onManualNavigation();
+      void listRef.current?.scrollToIndex({
+        index: rowIndex,
+        animated: true,
+        viewOffset: 24,
+      });
+    },
+    [listRef, onManualNavigation, rows],
+  );
+
+  const onToggleTurnFold = useCallback(
+    (turnId: TurnId, userMessageId?: MessageId | null) => {
+      let didCollapse = false;
+      setExpandedTurnIds((existing) => {
+        const next = new Set(existing);
+        if (next.has(turnId)) {
+          next.delete(turnId);
+          didCollapse = true;
+        } else {
+          next.add(turnId);
+        }
+        return next;
+      });
+      // Collapsing a long turn often leaves the viewport on the terminal
+      // assistant reply / file tree; bring the originating prompt back into view.
+      if (didCollapse && userMessageId) {
+        queueMicrotask(() => onScrollToMessage(userMessageId));
+      }
+    },
+    [onScrollToMessage],
+  );
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
@@ -421,6 +451,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      onScrollToMessage,
     }),
     [
       timestampFormat,
@@ -435,6 +466,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      onScrollToMessage,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -964,12 +996,28 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         type="button"
         aria-expanded={row.expanded}
         data-scroll-anchor-ignore
-        onClick={() => ctx.onToggleTurnFold(row.turnId)}
+        onClick={() => ctx.onToggleTurnFold(row.turnId, row.userMessageId)}
         className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-xs text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <span>{row.label}</span>
         <Icon className="size-3.5" />
       </button>
+      {row.userPromptPreview && row.userMessageId ? (
+        <button
+          type="button"
+          data-scroll-anchor-ignore
+          onClick={() => {
+            const userMessageId = row.userMessageId;
+            if (userMessageId) {
+              ctx.onScrollToMessage(userMessageId);
+            }
+          }}
+          className="mt-1 block w-full rounded-md px-1 text-left text-xs leading-5 text-muted-foreground/80 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+          title="Show your message"
+        >
+          <span className="line-clamp-2">{row.userPromptPreview}</span>
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -1231,7 +1279,9 @@ function AssistantChangedFilesSectionInner({
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
   const allDirectoriesExpanded = useUiStateStore(
-    (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.turnId] ?? true,
+    (store) =>
+      store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.turnId] ??
+      checkpointFiles.length <= CHANGED_FILES_DEFAULT_EXPAND_MAX,
   );
   const setExpanded = useUiStateStore((store) => store.setThreadChangedFilesExpanded);
   const summaryStat = summarizeTurnDiffStats(checkpointFiles);

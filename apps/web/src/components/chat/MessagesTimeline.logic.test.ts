@@ -512,6 +512,8 @@ describe("deriveMessagesTimelineRows", () => {
     );
     expect(foldRow?.turnId).toBe("turn-1");
     expect(foldRow?.expanded).toBe(false);
+    expect(foldRow?.userMessageId).toBe("user-1");
+    expect(foldRow?.userPromptPreview).toBe("Build it");
     // User message boundary (00:00:00) → terminal message updatedAt (00:00:22).
     expect(foldRow?.label).toBe("Worked for 22s");
     expect(collapsedRows.map((row) => row.id)).toEqual([
@@ -539,6 +541,68 @@ describe("deriveMessagesTimelineRows", () => {
     expect(
       expandedRows.find((row) => row.kind === "turn-fold" && row.expanded === true),
     ).toBeDefined();
+  });
+
+  it("compacts a long preceding user prompt onto the turn-fold row", () => {
+    const longPrompt = `${"a".repeat(160)} trailing`;
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user" as const,
+            text: longPrompt,
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-thought-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:05Z",
+          message: {
+            id: "assistant-thought" as never,
+            role: "assistant" as const,
+            text: "Looking around first.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:05Z",
+            updatedAt: "2026-01-01T00:00:06Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-final-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:20Z",
+          message: {
+            id: "assistant-final" as never,
+            role: "assistant" as const,
+            text: "Done",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:20Z",
+            updatedAt: "2026-01-01T00:00:22Z",
+            streaming: false,
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const foldRow = rows.find(
+      (row): row is Extract<(typeof rows)[number], { kind: "turn-fold" }> =>
+        row.kind === "turn-fold",
+    );
+    expect(foldRow?.userMessageId).toBe("user-1");
+    expect(foldRow?.userPromptPreview).toBe(`${"a".repeat(139)}…`);
+    expect(foldRow?.userPromptPreview?.endsWith("…")).toBe(true);
   });
 
   it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {

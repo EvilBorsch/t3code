@@ -10,6 +10,8 @@ import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../..
 import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
+/** Expand changed-file directory trees by default only for small diffs. */
+export const CHANGED_FILES_DEFAULT_EXPAND_MAX = 12;
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
@@ -117,6 +119,9 @@ export type MessagesTimelineRow =
       turnId: TurnId;
       label: string;
       expanded: boolean;
+      /** Preceding user prompt, for visibility when the bubble scrolled away. */
+      userPromptPreview: string | null;
+      userMessageId: MessageId | null;
     }
   | {
       kind: "message";
@@ -214,6 +219,8 @@ interface TurnFold {
   createdAt: string;
   hiddenEntryIds: ReadonlySet<string>;
   label: string;
+  userPromptPreview: string | null;
+  userMessageId: MessageId | null;
 }
 
 /**
@@ -238,6 +245,17 @@ function deriveUnsettledTurnId(
   return isSettled ? null : latestTurn.turnId;
 }
 
+function compactTurnFoldUserPromptPreview(text: string, maxLength = 140): string | null {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length === 0) {
+    return null;
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
 /**
  * Settled turns fold their commentary and tool activity behind a
  * "Worked for ..." row anchored at the turn's first foldable entry; the
@@ -260,13 +278,19 @@ function deriveTurnFolds(input: {
      * hold a single instantaneous commentary message.
      */
     startBoundary: string | null;
+    userPromptPreview: string | null;
+    userMessageId: MessageId | null;
   }
   const groupsByTurnId = new Map<TurnId, TurnGroup>();
 
   let pendingUserBoundary: string | null = null;
+  let pendingUserPromptPreview: string | null = null;
+  let pendingUserMessageId: MessageId | null = null;
   for (const entry of input.timelineEntries) {
     if (entry.kind === "message" && entry.message.role === "user") {
       pendingUserBoundary = entry.message.createdAt;
+      pendingUserPromptPreview = compactTurnFoldUserPromptPreview(entry.message.text);
+      pendingUserMessageId = entry.message.id;
       continue;
     }
     const turnId =
@@ -288,8 +312,12 @@ function deriveTurnFolds(input: {
         // same user message (e.g. a steer-superseded continuation) falls back
         // to its own first entry.
         startBoundary: pendingUserBoundary,
+        userPromptPreview: pendingUserPromptPreview,
+        userMessageId: pendingUserMessageId,
       };
       pendingUserBoundary = null;
+      pendingUserPromptPreview = null;
+      pendingUserMessageId = null;
       groupsByTurnId.set(turnId, group);
     }
     group.entries.push(entry);
@@ -358,6 +386,8 @@ function deriveTurnFolds(input: {
       createdAt: firstEntry.createdAt,
       hiddenEntryIds,
       label,
+      userPromptPreview: group.userPromptPreview,
+      userMessageId: group.userMessageId,
     });
   }
   return foldsByAnchorEntryId;
@@ -413,6 +443,8 @@ export function deriveMessagesTimelineRows(input: {
         turnId: turnFold.turnId,
         label: turnFold.label,
         expanded: input.expandedTurnIds?.has(turnFold.turnId) ?? false,
+        userPromptPreview: turnFold.userPromptPreview,
+        userMessageId: turnFold.userMessageId,
       });
     }
 
@@ -565,7 +597,13 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "turn-fold": {
       const bf = b as typeof a;
-      return a.createdAt === bf.createdAt && a.label === bf.label && a.expanded === bf.expanded;
+      return (
+        a.createdAt === bf.createdAt &&
+        a.label === bf.label &&
+        a.expanded === bf.expanded &&
+        a.userPromptPreview === bf.userPromptPreview &&
+        a.userMessageId === bf.userMessageId
+      );
     }
 
     case "proposed-plan":
