@@ -197,9 +197,16 @@ function assistantSegmentBaseKeyFromEvent(event: ProviderRuntimeEvent): string {
   return String(event.itemId ?? event.turnId ?? event.eventId);
 }
 
-function assistantSegmentMessageId(baseKey: string, segmentIndex: number): MessageId {
+function assistantSegmentMessageId(
+  baseKey: string,
+  segmentIndex: number,
+  turnId?: TurnId,
+): MessageId {
+  const scopedBaseKey = turnId ? `turn:${turnId}:${baseKey}` : baseKey;
   return MessageId.make(
-    segmentIndex === 0 ? `assistant:${baseKey}` : `assistant:${baseKey}:segment:${segmentIndex}`,
+    segmentIndex === 0
+      ? `assistant:${scopedBaseKey}`
+      : `assistant:${scopedBaseKey}:segment:${segmentIndex}`,
   );
 }
 function buildContextWindowActivityPayload(
@@ -756,11 +763,15 @@ const make = Effect.gen(function* () {
             onNone: () => ({
               baseKey: input.baseKey,
               nextSegmentIndex: 1,
-              activeMessageId: assistantSegmentMessageId(input.baseKey, 0),
+              activeMessageId: assistantSegmentMessageId(input.baseKey, 0, input.turnId),
             }),
             onSome: (state) => {
               const segmentIndex = state.baseKey === input.baseKey ? state.nextSegmentIndex : 0;
-              const messageId = assistantSegmentMessageId(input.baseKey, segmentIndex);
+              const messageId = assistantSegmentMessageId(
+                input.baseKey,
+                segmentIndex,
+                input.turnId,
+              );
               return {
                 baseKey: input.baseKey,
                 nextSegmentIndex: state.baseKey === input.baseKey ? state.nextSegmentIndex + 1 : 1,
@@ -1456,11 +1467,17 @@ const make = Effect.gen(function* () {
         yield* appendBufferedProposedPlan(planId, proposedPlanDelta, now);
       }
 
+      const assistantCompletionTurnId =
+        event.type === "item.completed" && event.payload.itemType === "assistant_message"
+          ? toTurnId(event.turnId)
+          : undefined;
       const assistantCompletion =
         event.type === "item.completed" && event.payload.itemType === "assistant_message"
           ? {
-              messageId: MessageId.make(
-                `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
+              messageId: assistantSegmentMessageId(
+                assistantSegmentBaseKeyFromEvent(event),
+                0,
+                assistantCompletionTurnId,
               ),
               fallbackText: event.payload.detail,
             }
@@ -1634,8 +1651,10 @@ const make = Effect.gen(function* () {
           if (hasCheckpointForTurn(checkpointContext.checkpoints, turnId)) {
             // Already tracked; no-op.
           } else {
-            const assistantMessageId = MessageId.make(
-              `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
+            const assistantMessageId = assistantSegmentMessageId(
+              assistantSegmentBaseKeyFromEvent(event),
+              0,
+              turnId,
             );
             yield* orchestrationEngine.dispatch({
               type: "thread.turn.diff.complete",

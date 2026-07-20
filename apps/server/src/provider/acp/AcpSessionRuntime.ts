@@ -18,6 +18,7 @@ import * as EffectAcpClient from "effect-acp/client";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
+import * as NodeCrypto from "node:crypto";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
@@ -278,6 +279,10 @@ export const make = (
     const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallState>());
+    // Unique per runtime instance so session/load (same Cursor sessionId, new
+    // process) cannot reuse assistant item IDs and append into prior-turn
+    // projection rows.
+    const assistantSegmentScopeId = NodeCrypto.randomUUID();
     const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
     const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
@@ -387,6 +392,7 @@ export const make = (
           modeStateRef,
           toolCallsRef,
           assistantSegmentRef,
+          assistantSegmentScopeId,
           params: notification,
         });
       }),
@@ -834,12 +840,14 @@ const handleSessionUpdate = ({
   modeStateRef,
   toolCallsRef,
   assistantSegmentRef,
+  assistantSegmentScopeId,
   params,
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallState>>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
+  readonly assistantSegmentScopeId: string;
   readonly params: EffectAcpSchema.SessionNotification;
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
@@ -886,6 +894,7 @@ const handleSessionUpdate = ({
         const itemId = yield* ensureActiveAssistantSegment({
           queue,
           assistantSegmentRef,
+          assistantSegmentScopeId,
           sessionId: params.sessionId,
         });
         yield* Queue.offer(queue, {
@@ -924,16 +933,19 @@ function shouldEmitToolCallUpdate(
   return previous === undefined || previous.title !== next.title || previous.detail !== next.detail;
 }
 
-const assistantItemId = (sessionId: string, segmentIndex: number) =>
-  `assistant:${sessionId}:segment:${segmentIndex}`;
+/** Stable assistant item id for one ACP runtime instance + session + segment. */
+export const assistantItemId = (sessionId: string, segmentScopeId: string, segmentIndex: number) =>
+  `assistant:${sessionId}:scope:${segmentScopeId}:segment:${segmentIndex}`;
 
 const ensureActiveAssistantSegment = ({
   queue,
   assistantSegmentRef,
+  assistantSegmentScopeId,
   sessionId,
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
+  readonly assistantSegmentScopeId: string;
   readonly sessionId: string;
 }) =>
   Ref.modify<AcpAssistantSegmentState, EnsureActiveAssistantSegmentResult>(
@@ -942,7 +954,7 @@ const ensureActiveAssistantSegment = ({
       if (current.activeItemId) {
         return [{ itemId: current.activeItemId }, current] as const;
       }
-      const itemId = assistantItemId(sessionId, current.nextSegmentIndex);
+      const itemId = assistantItemId(sessionId, assistantSegmentScopeId, current.nextSegmentIndex);
       return [
         {
           itemId,
