@@ -21,6 +21,7 @@ import type {
   ProviderOptionDescriptor,
   ServerProviderModel,
   ServerProviderSkill,
+  ServerProviderUsage,
 } from "@t3tools/contracts";
 import { ServerSettingsError } from "@t3tools/contracts";
 
@@ -31,6 +32,7 @@ import {
   buildServerProvider,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { normalizeProviderUsage } from "../providerUsage.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
@@ -47,6 +49,7 @@ export interface CodexAppServerProviderSnapshot {
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly usage?: ServerProviderUsage | undefined;
 }
 
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
@@ -357,21 +360,33 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models] = yield* Effect.all(
+  const [skillsResponse, models, rateLimitsResponse] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
+      // Лимиты аккаунта читаются здесь, а не из событий turn'а: пользователь
+      // тратит квоту и вне T3 Code, поэтому опрашиваем app-server напрямую.
+      // Метод не поддерживается старыми сборками codex — тогда просто нет usage.
+      client.request("account/rateLimits/read", undefined).pipe(Effect.option),
     ],
     { concurrency: "unbounded" },
   );
+
+  const usage = Option.isSome(rateLimitsResponse)
+    ? normalizeProviderUsage({
+        rateLimits: rateLimitsResponse.value.rateLimits,
+        capturedAt: DateTime.formatIso(yield* DateTime.now),
+      })
+    : undefined;
 
   return {
     account: accountResponse,
     version,
     models: appendCustomCodexModels(models, input.customModels ?? []),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+    ...(usage ? { usage } : {}),
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -559,6 +574,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     checkedAt,
     models: snapshot.models,
     skills: snapshot.skills,
+    ...(snapshot.usage ? { usage: snapshot.usage } : {}),
     probe: {
       installed: true,
       version: snapshot.version ?? null,

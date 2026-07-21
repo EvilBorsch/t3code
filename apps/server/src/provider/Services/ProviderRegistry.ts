@@ -11,6 +11,7 @@ import type {
   ProviderDriverKind,
   ServerProvider,
   ServerProviderUpdateState,
+  ServerProviderUsage,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -67,6 +68,17 @@ export interface ProviderRegistryShape {
     readonly instanceId: ProviderInstanceId;
     readonly action: ProviderMaintenanceActionKind;
     readonly state: ServerProviderUpdateState | null;
+  }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
+   * Apply the latest normalized account usage limits to one configured
+   * instance. The value is projected onto `ServerProvider.usage`, survives
+   * snapshot refreshes and is persisted with the instance status cache so
+   * limits are visible right after a server restart.
+   */
+  readonly setProviderUsage: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly usage: ServerProviderUsage;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**

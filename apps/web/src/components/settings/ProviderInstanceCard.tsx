@@ -25,6 +25,11 @@ import {
 
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import {
+  formatUsagePercent,
+  formatUsageResetLabel,
+  presentProviderUsage,
+} from "../../lib/providerUsage";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -150,6 +155,37 @@ function ProviderAuthEmail(props: {
         hideTooltip="Click to hide email"
       />
     </span>
+  );
+}
+
+// Строка лимитов аккаунта (короткое окно + неделя) в карточке провайдера.
+function ProviderUsageSummary(props: { readonly usage: ServerProvider["usage"] }) {
+  if (!props.usage) return null;
+  const nowMs = Date.now();
+  const windows = presentProviderUsage(props.usage, nowMs);
+  if (windows.length === 0) return null;
+
+  return (
+    <p className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground/80">
+      {windows.map((window) => (
+        <span key={window.slot} className="inline-flex min-w-0 items-center gap-1">
+          <span className="text-muted-foreground">{window.title}:</span>
+          <span
+            className={cn(
+              "font-medium tabular-nums",
+              window.usedPercent > 90
+                ? "text-destructive"
+                : window.usedPercent >= 75
+                  ? "text-warning"
+                  : "text-foreground/80",
+            )}
+          >
+            {formatUsagePercent(window.usedPercent)}
+          </span>
+          <span className="truncate">· {formatUsageResetLabel(window, nowMs)}</span>
+        </span>
+      ))}
+    </p>
   );
 }
 
@@ -705,6 +741,7 @@ export function ProviderInstanceCard({
               {titleTailNode}
             </div>
             {authRowNode}
+            <ProviderUsageSummary usage={liveProvider?.usage} />
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
             <Button

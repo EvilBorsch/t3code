@@ -6,6 +6,7 @@ import {
   ProviderDriverKind,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
+  type ServerProviderUsage,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -39,6 +40,7 @@ import {
   spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { normalizeProviderUsage } from "../providerUsage.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -496,6 +498,8 @@ type ClaudeCapabilitiesProbe = {
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  /** Отсутствует, когда лимиты плана неприменимы (API key, Bedrock, Vertex). */
+  readonly usage?: ServerProviderUsage;
 };
 
 function isClaudeAccountAuthenticated(account: ClaudeAccountInfo): boolean {
@@ -607,6 +611,7 @@ const probeClaudeCapabilities = (
   const abort = new AbortController();
   return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+    const capturedAt = DateTime.formatIso(yield* DateTime.now);
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // Never yield — we only need initialization data, not a conversation.
@@ -628,12 +633,27 @@ const probeClaudeCapabilities = (
       });
       const init = await q.initializationResult();
       const account = init.account;
+      // Лимиты плана читаются тем же probe-сеансом: квота тратится и вне
+      // T3 Code, поэтому опрашиваем CLI, а не ждём событий своего turn'а.
+      // API экспериментальный и отсутствует на API-key/Bedrock/Vertex —
+      // в этих случаях просто остаёмся без usage.
+      const usageResponse = await q
+        .usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?.()
+        .catch(() => undefined);
+      const usage =
+        usageResponse?.rate_limits_available && usageResponse.rate_limits
+          ? normalizeProviderUsage({
+              rateLimits: { rate_limits: usageResponse.rate_limits },
+              capturedAt,
+            })
+          : undefined;
       return {
         authenticated: isClaudeAccountAuthenticated(account),
         email: account.email,
         subscriptionType: account.subscriptionType,
         tokenSource: account.tokenSource,
         slashCommands: parseClaudeInitializationCommands(init.commands),
+        ...(usage ? { usage } : {}),
       } satisfies ClaudeCapabilitiesProbe;
     });
   }).pipe(
@@ -835,6 +855,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     checkedAt,
     models,
     slashCommands: dedupedSlashCommands,
+    ...(capabilities.usage ? { usage: capabilities.usage } : {}),
     probe: {
       installed: true,
       version: parsedVersion,

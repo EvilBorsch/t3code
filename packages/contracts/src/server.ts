@@ -144,6 +144,24 @@ export const ServerProviderUpdateStatus = Schema.Literals([
 ]);
 export type ServerProviderUpdateStatus = typeof ServerProviderUpdateStatus.Type;
 
+// Одно окно лимита аккаунта провайдера. `windowMinutes` хранит длительность
+// окна (например 300 для 5-часового), чтобы UI мог подписать индикатор.
+export const ServerProviderUsageWindow = Schema.Struct({
+  usedPercent: Schema.Number,
+  resetsAt: Schema.optional(IsoDateTime),
+  windowMinutes: Schema.optional(Schema.Number),
+});
+export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
+
+// Нормализованные лимиты аккаунта: `daily` — короткое окно провайдера
+// (у Claude и Codex это 5 часов), `weekly` — недельное окно.
+export const ServerProviderUsage = Schema.Struct({
+  daily: Schema.optional(ServerProviderUsageWindow),
+  weekly: Schema.optional(ServerProviderUsageWindow),
+  capturedAt: IsoDateTime,
+});
+export type ServerProviderUsage = typeof ServerProviderUsage.Type;
+
 export const ServerProviderUpdateState = Schema.Struct({
   status: ServerProviderUpdateStatus,
   startedAt: Schema.NullOr(IsoDateTime),
@@ -189,6 +207,7 @@ export const ServerProvider = Schema.Struct({
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  usage: Schema.optionalKey(ServerProviderUsage),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

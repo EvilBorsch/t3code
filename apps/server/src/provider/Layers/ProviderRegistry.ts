@@ -28,6 +28,7 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUpdateState,
+  type ServerProviderUsage,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -128,6 +129,22 @@ export const mergeProviderSnapshots = (
   }
 
   return orderProviderSnapshots([...mergedProviders.values()]);
+};
+
+/**
+ * Выбирает более свежий usage-снапшот из двух источников (probe провайдера и
+ * рантайм-события). Сравнение по `capturedAt`; при равенстве побеждает probe,
+ * так как он несёт полную картину окон, а событие — только затронутое.
+ */
+export const pickFreshestUsage = (
+  probeUsage: ServerProviderUsage | undefined,
+  eventUsage: ServerProviderUsage | undefined,
+): ServerProviderUsage | undefined => {
+  if (!probeUsage) return eventUsage;
+  if (!eventUsage) return probeUsage;
+  return Date.parse(eventUsage.capturedAt) > Date.parse(probeUsage.capturedAt)
+    ? eventUsage
+    : probeUsage;
 };
 
 export const selectProvidersByKind = (
@@ -270,6 +287,16 @@ export const ProviderRegistryLive = Layer.effect(
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
+    // Usage-лимиты живут в собственном overlay-стейте (как updateState), иначе
+    // каждый refresh-пробинг затирал бы их снапшотом без `usage`. Сидируем из
+    // дискового кэша, чтобы лимиты были видны сразу после рестарта сервера.
+    const usageStatesRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ServerProviderUsage>>(
+      new Map(
+        cachedProviders.flatMap((provider) =>
+          provider.usage ? [[provider.instanceId, provider.usage] as const] : [],
+        ),
+      ),
+    );
 
     // Live-source registry — the dynamic counterpart to the boot-time
     // `bootSources`. Keyed by `instanceId`; the stored `ProviderInstance`
@@ -307,18 +334,24 @@ export const ProviderRegistryLive = Layer.effect(
         );
       });
 
-    const applyProviderUpdateState = Effect.fn("applyProviderUpdateState")(function* (
+    // Накладывает volatile-состояния на снапшот. `updateState` живёт только
+    // в памяти, а usage приходит из двух источников: probe провайдера (опрос
+    // CLI, работает и без наших turn'ов) и рантайм-события во время turn'а.
+    // Побеждает более свежий по `capturedAt`, иначе редкий probe затирал бы
+    // свежее событие и наоборот.
+    const applyProviderOverlays = Effect.fn("applyProviderOverlays")(function* (
       provider: ServerProvider,
     ) {
       const maintenanceActionStates = yield* Ref.get(maintenanceActionStatesRef);
+      const usageStates = yield* Ref.get(usageStatesRef);
       const updateState = maintenanceActionStates.get(provider.instanceId)?.update;
-      if (!updateState) {
-        const { updateState: _updateState, ...providerWithoutUpdateState } = provider;
-        return providerWithoutUpdateState;
-      }
+      const eventUsage = usageStates.get(provider.instanceId);
+      const usage = pickFreshestUsage(provider.usage, eventUsage);
+      const { updateState: _updateState, usage: _usage, ...bareProvider } = provider;
       return {
-        ...provider,
-        updateState,
+        ...bareProvider,
+        ...(updateState ? { updateState } : {}),
+        ...(usage ? { usage } : {}),
       };
     });
 
@@ -332,7 +365,7 @@ export const ProviderRegistryLive = Layer.effect(
     ) {
       const nextProvidersWithUpdateState = yield* Effect.forEach(
         nextProviders,
-        applyProviderUpdateState,
+        applyProviderOverlays,
         {
           concurrency: "unbounded",
         },
@@ -420,12 +453,34 @@ export const ProviderRegistryLive = Layer.effect(
           return existingProviders;
         }
 
-        const nextProvider = yield* applyProviderUpdateState(matchingProvider);
+        const nextProvider = yield* applyProviderOverlays(matchingProvider);
         return yield* upsertProviders([nextProvider], {
           persist: false,
         });
       },
     );
+
+    const setProviderUsage = Effect.fn("setProviderUsage")(function* (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly usage: ServerProviderUsage;
+    }) {
+      yield* Ref.update(usageStatesRef, (previous) =>
+        new Map(previous).set(input.instanceId, input.usage),
+      );
+
+      const existingProviders = yield* Ref.get(providersRef);
+      const matchingProvider = existingProviders.find(
+        (candidate) => candidate.instanceId === input.instanceId,
+      );
+      if (!matchingProvider) {
+        return existingProviders;
+      }
+
+      // persist по умолчанию: usage уезжает в дисковый кэш инстанса и
+      // восстанавливается после рестарта через сидирование usageStatesRef.
+      const nextProvider = yield* applyProviderOverlays(matchingProvider);
+      return yield* upsertProviders([nextProvider]);
+    });
 
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (
       providerSource: ProviderSnapshotSource,
@@ -605,6 +660,15 @@ export const ProviderRegistryLive = Layer.effect(
           }
           return next;
         });
+        yield* Ref.update(usageStatesRef, (previous) => {
+          const next = new Map(previous);
+          for (const instanceId of previous.keys()) {
+            if (!knownInstanceIds.has(instanceId)) {
+              next.delete(instanceId);
+            }
+          }
+          return next;
+        });
       }),
     );
     const syncLiveSourcesAndContinue = syncLiveSources.pipe(
@@ -690,6 +754,7 @@ export const ProviderRegistryLive = Layer.effect(
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
+      setProviderUsage,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
       },

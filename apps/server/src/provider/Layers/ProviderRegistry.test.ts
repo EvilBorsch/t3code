@@ -39,6 +39,7 @@ import {
   haveProvidersChanged,
   mergeProviderSnapshot,
   mergeProviderSnapshots,
+  pickFreshestUsage,
   ProviderRegistryLive,
   selectProvidersByKind,
 } from "./ProviderRegistry.ts";
@@ -471,6 +472,38 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(yield* Ref.get(killCalls), 1);
         }),
       );
+    });
+
+    describe("pickFreshestUsage", () => {
+      const probeUsage = {
+        daily: { usedPercent: 10, windowMinutes: 300 },
+        weekly: { usedPercent: 20, windowMinutes: 10_080 },
+        capturedAt: "2026-07-21T12:00:00.000Z",
+      } as const;
+
+      it("keeps the probe snapshot when no runtime event has been seen", () => {
+        assert.strictEqual(pickFreshestUsage(probeUsage, undefined), probeUsage);
+      });
+
+      it("keeps the event snapshot when the probe reported nothing", () => {
+        const eventUsage = { daily: { usedPercent: 5 }, capturedAt: "2026-07-21T11:00:00.000Z" };
+        assert.strictEqual(pickFreshestUsage(undefined, eventUsage), eventUsage);
+      });
+
+      it("prefers a newer runtime event over an older probe", () => {
+        const eventUsage = { daily: { usedPercent: 42 }, capturedAt: "2026-07-21T12:30:00.000Z" };
+        assert.strictEqual(pickFreshestUsage(probeUsage, eventUsage), eventUsage);
+      });
+
+      it("keeps the probe when the event is stale", () => {
+        const eventUsage = { daily: { usedPercent: 42 }, capturedAt: "2026-07-21T11:30:00.000Z" };
+        assert.strictEqual(pickFreshestUsage(probeUsage, eventUsage), probeUsage);
+      });
+
+      it("prefers the probe on identical timestamps because it carries every window", () => {
+        const eventUsage = { daily: { usedPercent: 42 }, capturedAt: probeUsage.capturedAt };
+        assert.strictEqual(pickFreshestUsage(probeUsage, eventUsage), probeUsage);
+      });
     });
 
     describe("ProviderRegistryLive", () => {
