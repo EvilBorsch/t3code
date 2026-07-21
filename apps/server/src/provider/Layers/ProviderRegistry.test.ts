@@ -56,6 +56,7 @@ const encodedDefaultServerSettings = encodeServerSettings(DEFAULT_SERVER_SETTING
 
 const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
 const defaultCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({});
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 const disabledCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({
   enabled: false,
 });
@@ -98,20 +99,20 @@ function booleanDescriptor(id: string, label: string) {
 }
 
 type TestClaudeCapabilities = {
-  readonly authenticated: boolean;
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
+  readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
   return () =>
     Effect.succeed({
-      authenticated: true,
       email: undefined,
       subscriptionType: undefined,
       tokenSource: undefined,
+      apiProvider: undefined,
       slashCommands: [],
       ...overrides,
     });
@@ -346,6 +347,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               shortDescription: "Debug failing GitHub Actions checks",
             },
           ]);
+        }),
+      );
+
+      it.effect("passes configured launch args to the Codex provider probe", () =>
+        Effect.gen(function* () {
+          let observedLaunchArgs: string | undefined;
+          const settings = decodeCodexSettings({ launchArgs: "--strict-config --enable foo" });
+
+          const status = yield* checkCodexProviderStatus(settings, (input) => {
+            observedLaunchArgs = input.launchArgs;
+            return Effect.succeed(makeCodexProbeSnapshot());
+          });
+
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(observedLaunchArgs, "--strict-config --enable foo");
         }),
       );
 
@@ -1431,7 +1447,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
               Layer.provideMerge(
                 mockCommandSpawnerLayer((command, args) => {
-                  if (command === "agent") {
+                  if (command === "cursor-agent") {
                     cursorSpawned = true;
                   }
                   const joined = args.join(" ");
@@ -1521,6 +1537,30 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   stderr: "",
                   code: 0,
                 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("returns ready and labels Bedrock-backed Claude as authenticated", () =>
+        Effect.gen(function* () {
+          // Bedrock authenticates via external AWS credentials, so the SDK init
+          // reports only `apiProvider` with no subscription or token.
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({ apiProvider: "bedrock" }),
+          );
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.type, "bedrock");
+          assert.strictEqual(status.auth.label, "Amazon Bedrock");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
               throw new Error(`Unexpected args: ${joined}`);
             }),
           ),
@@ -1754,8 +1794,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ),
       );
 
-      it.effect("runs Claude status probes with the configured Claude HOME", () => {
-        const claudeHome = "/tmp/t3code-claude-home";
+      it.effect("runs Claude status probes with the configured CLAUDE_CONFIG_DIR", () => {
+        const claudeConfigDir = "/tmp/t3code-claude-home";
         const recorded = recordingMockSpawnerLayer((args) => {
           const joined = args.join(" ");
           if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
@@ -1772,14 +1812,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const status = yield* checkClaudeProviderStatus(
             {
               ...defaultClaudeSettings,
-              homePath: claudeHome,
+              homePath: claudeConfigDir,
             },
             claudeCapabilities(),
           );
           assert.strictEqual(status.status, "ready");
           assert.deepStrictEqual(
-            recorded.commands.map((command) => command.env?.HOME),
-            [claudeHome],
+            recorded.commands.map((command) => command.env?.CLAUDE_CONFIG_DIR),
+            [claudeConfigDir],
           );
         }).pipe(Effect.provide(recorded.layer));
       });
@@ -1967,25 +2007,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ),
       );
 
-      it.effect("returns unauthenticated when Claude initialization has no account", () =>
+      // A credential-less first-party account no longer downgrades the
+      // provider: Amazon Bedrock reports no subscription/token either, and
+      // treating that as unauthenticated made Bedrock unselectable.
+      it.effect("stays ready when Claude reports an account without credentials", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
             claudeCapabilities({
-              authenticated: false,
               tokenSource: "none",
+              apiProvider: "firstParty",
               slashCommands: [{ name: "login" }],
             }),
           );
 
-          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.auth.status, "unauthenticated");
-          assert.deepStrictEqual(status.slashCommands, []);
-          assert.strictEqual(
-            status.message,
-            "Claude is not authenticated. Run `claude auth login` in a terminal and try again.",
-          );
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.deepStrictEqual(status.slashCommands, [{ name: "login" }]);
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

@@ -120,6 +120,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
+      const { cwd } = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
@@ -151,18 +152,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
 
       // Per-instance capabilities cache: keyed on binary + resolved HOME so
       // account-specific probes never share auth metadata across instances.
-      const capabilitiesProbeCache = yield* Cache.makeWith(
-        () =>
-          probeClaudeCapabilities(effectiveConfig, processEnv).pipe(
+      const capabilitiesProbeCache = yield* Cache.make({
+        capacity: 1,
+        timeToLive: CAPABILITIES_PROBE_TTL,
+        lookup: () =>
+          probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
             Effect.provideService(Path.Path, path),
           ),
-        {
-          capacity: 1,
-          timeToLive: (exit) =>
-            Exit.isSuccess(exit) && exit.value ? CAPABILITIES_PROBE_TTL : Duration.zero,
-        },
-      );
-      const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig);
+      });
+      const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
 
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,

@@ -41,9 +41,13 @@ describe("probeClaudeCapabilities", () => {
   });
 
   it.layer(NodeServices.layer)("Claude Agent SDK", (it) => {
-    it.effect("runs the initialization probe outside the server working directory", () =>
+    it.effect("runs the initialization probe in the caller-supplied directory", () =>
       Effect.gen(function* () {
-        const capabilities = yield* probeClaudeCapabilities(decodeClaudeSettings({}));
+        const capabilities = yield* probeClaudeCapabilities(
+          decodeClaudeSettings({}),
+          undefined,
+          NodeOS.tmpdir(),
+        );
         const invocation = queryMock.mock.calls[0]?.[0] as
           | {
               readonly options?: {
@@ -56,10 +60,10 @@ describe("probeClaudeCapabilities", () => {
         expect(invocation?.options?.cwd).toBe(NodeOS.tmpdir());
         expect(invocation?.options?.pathToClaudeCodeExecutable).toBe("claude");
         expect(capabilities).toEqual({
-          authenticated: true,
           email: "developer@example.com",
           subscriptionType: "Claude Pro",
           tokenSource: undefined,
+          apiProvider: undefined,
           slashCommands: [
             {
               name: "review",
@@ -71,7 +75,18 @@ describe("probeClaudeCapabilities", () => {
       }),
     );
 
-    it.effect("recognizes a first-party account without credentials as unauthenticated", () =>
+    it.effect("never falls back to the server working directory", () =>
+      Effect.gen(function* () {
+        yield* probeClaudeCapabilities(decodeClaudeSettings({}));
+        const invocation = queryMock.mock.calls[0]?.[0] as
+          | { readonly options?: { readonly cwd?: string } }
+          | undefined;
+
+        expect(invocation?.options?.cwd).toBeUndefined();
+      }),
+    );
+
+    it.effect("surfaces a first-party account that has no credentials", () =>
       Effect.gen(function* () {
         queryMock.mockReturnValue({
           initializationResult: () =>
@@ -87,10 +102,10 @@ describe("probeClaudeCapabilities", () => {
         const capabilities = yield* probeClaudeCapabilities(decodeClaudeSettings({}));
 
         expect(capabilities).toEqual({
-          authenticated: false,
           email: undefined,
           subscriptionType: undefined,
           tokenSource: "none",
+          apiProvider: "firstParty",
           slashCommands: [{ name: "login", description: "Sign in" }],
         });
       }),
