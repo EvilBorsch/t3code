@@ -1,10 +1,14 @@
-# Diff vs `origin/main` (branch `fix-claude`)
+# Diff vs `origin/main` (branch `fix-claude-usage-master`)
 
 > Default branch is **`main`** (there is no `master` remote). This file is the full handoff
-> document for **everything** on `fix-claude` that differs from `origin/main`, so another
+> document for **everything** on this branch that differs from `origin/main`, so another
 > human/LLM can continue without rediscovering intent from scattered commits.
+>
+> Lineage: `fix-claude` → `fix-claude-usage` (account usage limits) →
+> `fix-claude-usage-master` (merged current `origin/main`). Published as
+> [`EvilBorsch/t3code`](https://github.com/EvilBorsch/t3code), a fork of `pingdotgg/t3code`.
 
-**Sync status (at time of writing):** **3 commits behind** / **6 commits ahead** of
+**Sync status (at time of writing):** **1 commit behind** / **14 commits ahead** of
 `origin/main`. Re-check with:
 
 ```bash
@@ -14,27 +18,34 @@ git log --oneline origin/main..HEAD
 git diff --stat origin/main...HEAD
 ```
 
-Currently behind on unrelated `main` work (`#4079` dropped events, `#4017` Claude
-`CLAUDE_CONFIG_DIR`, `#4014` screenshot harness) — merge/rebase before shipping if needed.
-
 ## Commits on this branch (oldest → newest)
 
-| Commit      | Summary                                                                    |
-| ----------- | -------------------------------------------------------------------------- |
-| `2c7df9070` | `Fix claude` — first Claude probe hardening (TTL on failure, timeout, cwd) |
-| `85d1338c2` | Merge `origin/main` into `fix-claude`                                      |
-| `08728b5b4` | Full `t3 open` / desktop open-workspace pipeline + remaining Claude/pty/UI |
-| `14c07d7f2` | Isolate local Electron userData from Nightly + local `t3` launcher scripts |
-| `6dad6216b` | Document full `fix-claude` delta vs `origin/main` (this handoff doc)       |
-| `6db2e51e9` | macOS Nightly open fix: pending-file + `open -a`, prefer installed Nightly |
+| Commit      | Summary                                                                     |
+| ----------- | --------------------------------------------------------------------------- |
+| `2c7df9070` | `Fix claude` — first Claude probe hardening (TTL on failure, timeout, cwd)  |
+| `85d1338c2` | Merge `origin/main` into `fix-claude`                                       |
+| `08728b5b4` | Full `t3 open` / desktop open-workspace pipeline + remaining Claude/pty/UI  |
+| `14c07d7f2` | Isolate local Electron userData from Nightly + local `t3` launcher scripts  |
+| `6dad6216b` | Document full `fix-claude` delta vs `origin/main` (this handoff doc)        |
+| `6db2e51e9` | macOS Nightly open fix: pending-file + `open -a`, prefer installed Nightly  |
+| `fe07eadb7` | `fix diff`                                                                  |
+| `1a4952fec` | Namespace assistant message IDs so `session/load` cannot collide            |
+| `70cbd80fe` | Codex turn-fold preview for long prompts + smaller default diffs            |
+| `8e5c7db18` | Heal corrupt warm thread caches that drop user prompts                      |
+| `c7d5b82c8` | **Account usage limits** for Codex + Claude (providers tab + composer)      |
+| `a09e00f6e` | README section describing this fork                                         |
+| `474aa329d` | **Merge current `origin/main`** — see Theme E for the reconciliations       |
+| `45d8565aa` | Probe Claude capabilities from a neutral directory again (desktop hang fix) |
 
 ## Product themes (all intentional deltas)
 
-This branch is **not** a single-feature branch. It has three themes:
+This branch is **not** a single-feature branch. It has five themes:
 
-1. **Claude auth / provider reliability** — installed-but-logged-out Claude must not look healthy; probe must be robust; UI must block send and show server message.
+1. **Claude auth / provider reliability** — probe must be robust and must not run in a huge directory. **Much of the original auth-detection half was replaced by upstream during the `474aa329d` merge — read Theme A before trusting older notes.**
 2. **Terminal / node-pty under Electron** — spawn-helper resolution through `app.asar` → `app.asar.unpacked`; attach must not hide error events.
 3. **`t3 .` / `t3 open` → desktop workspace + new draft** — CLI launches **installed Nightly** (not local Alpha) with open-workspace intent; desktop queues intent (argv / second-instance / pending-file); renderer creates project + draft (pencil semantics). Includes local-dev isolation so a rebuilt desktop can run beside installed Nightly when explicitly opted in.
+4. **Account usage limits** — daily/weekly rate-limit rings in the composer and a limits row per provider card, polled from each provider CLI rather than inferred from turns. See Theme D.
+5. **Merge reconciliations** — places where upstream reworked the same code this branch touched. See Theme E.
 
 ---
 
@@ -48,35 +59,64 @@ This branch is **not** a single-feature branch. It has three themes:
 - UI banner used generic copy even when the server already sent a specific message.
 - Send path did not hard-block unauthenticated providers.
 
-### Behavior now
+### What survives today
 
-1. Capability probe timeout: **8s → 20s**.
-2. Probe runs with **`cwd: os.tmpdir()`** (not the server process cwd).
-3. Probe uses typed Claude SDK `AccountInfo`.
-4. New `isClaudeAccountAuthenticated(account)`:
-   - looks at email / organization / subscriptionType / tokenSource / apiKeySource;
-   - empty / `"none"` (case-insensitive) do **not** count as authenticated;
-   - also treats non-`firstParty` `apiProvider` as authenticated signal.
-5. Probe result includes **`authenticated: boolean`**.
-6. If installed but `authenticated === false` → provider status:
-   - `status: "error"`
-   - `auth.status: "unauthenticated"`
-   - actionable `message`: run `claude auth login`
-7. Capabilities cache (`ClaudeDriver`): **`Cache.makeWith`** — successful probes keep TTL; **failed / empty probes expire immediately** (`Duration.zero`).
-8. Web:
-   - `ChatView` aborts send when selected provider `auth.status === "unauthenticated"` and sets thread error (prefers server `message`).
-   - `ProviderStatusBanner` prefers `status.message` over generic unauthenticated/error copy.
+1. **Probe runs in a neutral directory** (`os.tmpdir()`, passed by `ClaudeDriver`).
+   This is the single most load-bearing item in this theme — see below.
+2. `ProviderStatusBanner` prefers `status.message` over generic copy.
+3. `ChatView` still aborts send when the selected provider reports
+   `auth.status === "unauthenticated"`. **For Claude this path is currently unreachable**
+   (nothing sets that status anymore); it still applies to other providers.
+4. Probe timeout is now **25s** (upstream raised it from this branch's 20s for Bedrock).
+
+### Probe working directory — do not regress this again
+
+Claude Code scans its working directory during initialization, so probe cost is dictated by
+what that directory contains. Measured on a real machine:
+
+| Probe cwd          | `initializationResult()` |
+| ------------------ | ------------------------ |
+| `os.tmpdir()`      | ~0.6s                    |
+| a project checkout | ~0.4s                    |
+| `$HOME`            | **~58s**                 |
+
+The desktop app's server cwd is `$HOME`. Upstream's `474aa329d` change made the probe use
+the server cwd, which blew the 25s budget on every refresh; the capabilities cache then held
+that miss for its whole TTL, so the provider card sat on _"Could not verify Claude
+authentication status from initialization result."_ while turns kept working normally.
+`45d8565aa` restored the neutral directory.
+
+`probeClaudeCapabilities(settings, env, cwd?)` still accepts a cwd — only the driver's choice
+of value changed. Passing a project directory would also be fast and would additionally expose
+project-scoped slash commands; passing the server cwd is what must never happen.
+
+### Replaced by upstream in the `474aa329d` merge
+
+Upstream reworked auth detection around `apiProvider`, because treating "no subscription and
+no token" as logged-out also mislabels Amazon Bedrock (external AWS credentials, no
+subscription fields) and made it unselectable. Consequences to be aware of:
+
+- The probe result no longer carries `authenticated: boolean`; it carries `apiProvider`.
+- The `status: "error"` + `auth.status: "unauthenticated"` mapping for Claude is **gone**.
+  A logged-out Claude now reports `ready`.
+- `isClaudeAccountAuthenticated()` is still defined in `ClaudeProvider.ts` but is **dead code**.
+- The fail-fast cache TTL was lost: `Cache.makeWith` (failures expire immediately) became
+  upstream's `Cache.make` with a flat 5-minute TTL, so a failed probe is now cached for the
+  full window. This is what turned the cwd regression above into a sticky error.
+
+These are listed under follow-ups rather than silently re-applied, since re-adding the
+unauthenticated mapping on top of upstream's model needs a Bedrock-safe rule.
 
 ### Files
 
-| Path                                                       | Change                                                       |
-| ---------------------------------------------------------- | ------------------------------------------------------------ |
-| `apps/server/src/provider/Layers/ClaudeProvider.ts`        | timeout, cwd, auth detection, unauthenticated status mapping |
-| `apps/server/src/provider/Layers/ClaudeProvider.test.ts`   | **new** — probe cwd + auth mapping coverage                  |
-| `apps/server/src/provider/Drivers/ClaudeDriver.ts`         | fail-fast capability cache TTL                               |
-| `apps/server/src/provider/Layers/ProviderRegistry.test.ts` | related registry/Claude coverage                             |
-| `apps/web/src/components/ChatView.tsx`                     | block send when unauthenticated                              |
-| `apps/web/src/components/chat/ProviderStatusBanner.tsx`    | prefer server message                                        |
+| Path                                                       | Change                                               |
+| ---------------------------------------------------------- | ---------------------------------------------------- |
+| `apps/server/src/provider/Layers/ClaudeProvider.ts`        | probe shape, `/usage` read, upstream auth model      |
+| `apps/server/src/provider/Layers/ClaudeProvider.test.ts`   | **new** — probe cwd guard + account field coverage   |
+| `apps/server/src/provider/Drivers/ClaudeDriver.ts`         | neutral probe cwd (`os.tmpdir()`) + capability cache |
+| `apps/server/src/provider/Layers/ProviderRegistry.test.ts` | related registry/Claude coverage                     |
+| `apps/web/src/components/ChatView.tsx`                     | block send when unauthenticated                      |
+| `apps/web/src/components/chat/ProviderStatusBanner.tsx`    | prefer server message                                |
 
 ---
 
@@ -267,6 +307,94 @@ Verified smoke (post-`6db2e51e9` Nightly install):
 
 ---
 
+## Theme D — Account usage limits
+
+### Problem
+
+Nothing in the UI showed how much of the plan's quota was left, and the only signal the
+runtime received was `account.rate-limits.updated`, which arrives **during a turn**. Quota is
+also spent outside T3 Code, so a turn-driven number is stale exactly when it matters.
+
+### Behavior now
+
+1. **Limits are polled from each provider CLI**, folded into probes that already run:
+   - **Codex** — `account/rateLimits/read` added to the existing app-server probe batch
+     (`~60s` refresh). No extra process.
+   - **Claude** — the `/usage` control request on the lightweight SDK probe session that
+     already reads account info (`~5min` TTL). Its prompt never yields, so no API request is
+     made and no tokens are spent. No extra process.
+2. Runtime `account.rate-limits.updated` events still apply instantly during a turn.
+3. Probe and event snapshots are reconciled by `capturedAt` (`pickFreshestUsage`), so neither
+   source clobbers fresher data. Ties go to the probe, which carries every window.
+4. Usage is an **overlay** in `ProviderRegistry`, like `updateState`: it survives probe
+   refreshes that know nothing about it, is persisted to the per-instance status cache, and is
+   re-seeded on boot.
+5. UI: two rings beside the composer send button for the selected provider, hover shows
+   percent + reset time; the same numbers appear as a row on each provider settings card.
+   Above 75% is amber, above 90% red. A window whose reset time has passed renders 0% with an
+   explanatory tooltip instead of a stale number.
+
+### Window classification — by duration, not field name
+
+Codex returns its **7-day** window under `primary` with `secondary: null` on at least some
+plans. Slots are therefore derived from `windowDurationMins` (`<= 1440` → daily, else weekly),
+never from the field it arrived in. Mapping `primary → daily` would render a weekly limit
+labelled as a 5-hour one.
+
+Accepted payload shapes (all normalized to `{ daily?, weekly?, capturedAt }`):
+
+| Source                    | Shape                                                           |
+| ------------------------- | --------------------------------------------------------------- |
+| Codex app-server          | `{ primary?, secondary? }` with `usedPercent`/`resetsAt`        |
+| Claude `rate_limit_event` | `{ rate_limit_info: { rateLimitType, utilization, resetsAt } }` |
+| Claude `/usage` snapshot  | `{ rate_limits: { five_hour?, seven_day? } }`                   |
+
+Reset stamps arrive as epoch seconds, epoch millis, or ISO strings; all three are handled.
+
+### Providers without limits
+
+**Cursor exposes no account usage.** `cursor-agent status/about --format json` return only
+version, tier and email, and ACP's `usage_update` carries per-turn context and cost, not plan
+limits. The internal `GetUsageLimitStatusAndActiveGrants` RPC exists in the binary but is not
+reachable through the CLI or ACP. The meter renders nothing rather than fabricating numbers.
+Grok and OpenCode are likewise not covered.
+
+### Files
+
+| Path                                                        | Change                                              |
+| ----------------------------------------------------------- | --------------------------------------------------- |
+| `packages/contracts/src/server.ts`                          | `ServerProviderUsage` / `ServerProviderUsageWindow` |
+| `apps/server/src/provider/providerUsage.ts`                 | **new** — payload normalization                     |
+| `apps/server/src/provider/providerUsage.test.ts`            | **new** — all three payload shapes                  |
+| `apps/server/src/provider/Layers/ProviderUsageMonitor.ts`   | **new** — folds runtime events into the overlay     |
+| `apps/server/src/provider/Services/ProviderUsageMonitor.ts` | **new** — service tag                               |
+| `apps/server/src/provider/Layers/ProviderRegistry.ts`       | usage overlay + `pickFreshestUsage`                 |
+| `apps/server/src/provider/Layers/CodexProvider.ts`          | `account/rateLimits/read` in the probe              |
+| `apps/server/src/provider/Layers/ClaudeProvider.ts`         | `/usage` control request in the probe               |
+| `apps/server/src/provider/providerSnapshot.ts`              | `usage` on the snapshot builder                     |
+| `apps/server/src/provider/providerStatusCache.ts`           | usage survives cache hydration                      |
+| `apps/web/src/lib/providerUsage.ts`                         | **new** — presentation + reset formatting           |
+| `apps/web/src/components/chat/ProviderUsageMeter.tsx`       | **new** — composer rings                            |
+| `apps/web/src/components/settings/ProviderInstanceCard.tsx` | limits row                                          |
+| `apps/web/src/components/chat/ChatComposer.tsx`             | mounts the meter for the selected provider          |
+
+---
+
+## Theme E — Merge reconciliations (`474aa329d`)
+
+Upstream had independently reworked several areas this branch touches. What was decided:
+
+| Area                        | Resolution                                                                                                                                                                                                                                                                                  |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ACP assistant item IDs      | Upstream landed the **same** `session/load` namespacing fix using Effect's crypto instead of `node:crypto`. Upstream's version taken; `assistantItemId` kept exported and this branch's test retargeted from `scope:` to `runtime:`.                                                        |
+| Claude auth detection       | Upstream's `apiProvider` model taken wholesale — see Theme A.                                                                                                                                                                                                                               |
+| Warm thread cache heuristic | A **still-running** turn with no messages no longer counts as assistant evidence. Without this, upstream's new `ACTIVE_THREAD` fixture (empty `messages`, running turn) was rejected as corrupt and the thread never went live from cache. Settled turns and assistant output still reject. |
+| Desktop identity isolation  | Kept alongside upstream's `configuredBaseDir` handling in `stateDir`.                                                                                                                                                                                                                       |
+| Sidebar layout              | Kept `DesktopOpenWorkspaceListener` alongside upstream's stage backdrop / resizable sidebar work.                                                                                                                                                                                           |
+| `packages/shared` exports   | Both `./desktopOpenArgs` (this branch) and `./connectAuth` (upstream) kept.                                                                                                                                                                                                                 |
+
+---
+
 ## Important pitfalls
 
 1. **Stock Nightly/Alpha must include Theme C desktop code** (including pending-file). CLI alone is not enough; old apps ignore `--open-workspace` / never read the pending file.
@@ -278,6 +406,9 @@ Verified smoke (post-`6db2e51e9` Nightly install):
 7. **Running Nightly + local rebuild** without custom `T3CODE_DESKTOP_APP_USER_MODEL_ID` collides on Electron userData / single-instance lock — use `T3CODE_USE_LOCAL_DESKTOP=1` only when intentional.
 8. **Never hand-edit** an installed `.app` (`Info.plist` / `app.asar`) to “hot-patch” open-workspace — that broke Nightly launches (`Unable to find helper app`). Always reinstall from a DMG/`ditto`.
 9. **macOS warm start needs pending-file** — `open -a` does not reliably deliver argv to an already-running Electron app via `second-instance`.
+10. **Never point the Claude capability probe at the server cwd** — on desktop that is `$HOME` and initialization takes ~58s, past the 25s budget. See Theme A.
+11. **Usage windows are classified by duration**, not by the field they arrive in — Codex ships a 7-day window under `primary`. See Theme D.
+12. **A failed capability probe is cached for the full 5-minute TTL** since the merge, so probe regressions present as sticky errors rather than transient ones.
 
 ---
 
@@ -300,7 +431,16 @@ cd packages/shared && vp test run src/desktopOpenArgs.test.ts
 vp run --filter @t3tools/web test -- src/lib/openWorkspaceIntent.test.ts
 vp run --filter @t3tools/desktop test -- src/app/DesktopEnvironment.test.ts
 
-# Manual: Claude unauthenticated → banner + send blocked
+# Usage limits (server normalization + web presentation)
+cd apps/server && vp test src/provider/providerUsage.test.ts
+cd apps/web && vp test src/lib/providerUsage.test.ts
+
+# Manual: usage limits arrive with no turn at all — start against a clean home and
+# watch the per-instance status cache fill in:
+#   T3CODE_HOME=/tmp/t3-check node apps/server/src/bin.ts serve --port 13779 --base-dir /tmp/t3-check
+#   cat /tmp/t3-check/caches/claudeAgent.json | python3 -m json.tool | grep -A8 '"usage"'
+# Run the server from $HOME to cover the Theme A regression: status must stay "ready".
+
 # Manual: t3 open against Nightly built from this branch
 command -v t3
 t3 open --help
@@ -329,9 +469,18 @@ vp run typecheck
 - `apps/server/src/cli/desktopLaunch.test.ts`
 - `apps/server/src/cli/open.ts`
 - `apps/server/src/provider/Layers/ClaudeProvider.test.ts`
+- `apps/server/src/provider/Layers/ProviderUsageMonitor.ts`
+- `apps/server/src/provider/Services/ProviderUsageMonitor.ts`
+- `apps/server/src/provider/providerUsage.ts`
+- `apps/server/src/provider/providerUsage.test.ts`
+- `apps/server/src/provider/acp/AcpSessionRuntime.assistantItemId.test.ts`
 - `apps/web/src/components/DesktopOpenWorkspaceListener.tsx`
+- `apps/web/src/components/chat/ProviderUsageMeter.tsx`
 - `apps/web/src/lib/openWorkspaceIntent.ts`
 - `apps/web/src/lib/openWorkspaceIntent.test.ts`
+- `apps/web/src/lib/providerUsage.ts`
+- `apps/web/src/lib/providerUsage.test.ts`
+- `packages/client-runtime/src/state/threadCache.test.ts`
 - `packages/shared/src/desktopOpenArgs.ts`
 - `packages/shared/src/desktopOpenArgs.test.ts`
 - `scripts/t3-code-desktop-local.mjs`
@@ -353,24 +502,55 @@ vp run typecheck
 - `apps/desktop/src/window/DesktopApplicationMenu.test.ts`
 - `apps/desktop/src/window/DesktopWindow.ts`
 - `apps/server/src/bin.ts`
+- `apps/server/src/server.ts`
+- `apps/server/src/serverRuntimeStartup.ts`
 - `apps/server/src/provider/Drivers/ClaudeDriver.ts`
 - `apps/server/src/provider/Layers/ClaudeProvider.ts`
+- `apps/server/src/provider/Layers/CodexProvider.ts`
+- `apps/server/src/provider/Layers/ProviderRegistry.ts`
 - `apps/server/src/provider/Layers/ProviderRegistry.test.ts`
+- `apps/server/src/provider/Services/ProviderRegistry.ts`
+- `apps/server/src/provider/providerSnapshot.ts`
+- `apps/server/src/provider/providerStatusCache.ts`
+- `apps/server/src/provider/testUtils/providerRegistryMock.ts`
 - `apps/server/src/terminal/Manager.ts`
 - `apps/server/src/terminal/Manager.test.ts`
 - `apps/server/src/terminal/NodePtyAdapter.ts`
 - `apps/server/src/terminal/NodePtyAdapter.test.ts`
 - `apps/web/src/components/AppSidebarLayout.tsx`
 - `apps/web/src/components/ChatView.tsx`
+- `apps/web/src/components/chat/ChatComposer.tsx`
 - `apps/web/src/components/chat/ProviderStatusBanner.tsx`
+- `apps/web/src/components/settings/ProviderInstanceCard.tsx`
+- `apps/server/src/provider/acp/AcpSessionRuntime.ts`
+- `packages/client-runtime/src/state/threads.ts`
 - `packages/contracts/src/ipc.ts`
+- `packages/contracts/src/server.ts`
 - `packages/shared/package.json`
 
 ---
 
 ## Suggested follow-ups (not done on this branch)
 
-- Merge/rebase onto current `origin/main` (branch is 3 commits behind).
+**From the `474aa329d` merge (highest value first):**
+
+- **Restore fail-fast capability caching.** Upstream's flat `Cache.make` TTL keeps a failed
+  Claude probe for 5 minutes; the pre-merge `Cache.makeWith` expired failures immediately.
+  This is what made the Theme A cwd regression sticky instead of self-healing.
+- **Decide the fate of logged-out Claude detection.** Upstream removed the
+  `unauthenticated` mapping, so a logged-out Claude reports `ready` and `ChatView`'s send
+  guard is unreachable for it. Re-adding it needs a rule that does not mislabel Bedrock.
+- **Remove or re-wire `isClaudeAccountAuthenticated()`** — currently dead code.
+
+**Usage limits:**
+
+- Consider passing a project directory (not `$HOME`) as the Claude probe cwd to also surface
+  project-scoped slash commands, keeping the neutral-directory guarantee for the desktop case.
+- No coverage for Grok / OpenCode / Cursor; Cursor is blocked upstream of us (Theme D).
+- Rings show only `daily` / `weekly`; Claude also reports per-model and overage windows.
+
+**Pre-existing:**
+
 - Ship a Nightly/Alpha release that includes Theme C (pending-file + `open -a` path) so stock installs work without rebuilding from this checkout.
 - Install a `t3` CLI shim from the desktop installer / brew cask.
 - Deep-link (`t3code://open?path=...`) reusing `DesktopOpenIntent` + pending-file.

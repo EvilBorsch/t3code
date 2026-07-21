@@ -19,6 +19,8 @@ Windows are classified by their duration, not by the field they arrive in — Co
 
 **Cursor shows nothing.** Its CLI (`cursor-agent status/about`) and ACP surface expose no account usage — `usage_update` carries per-turn context and cost, not plan limits. Rather than fabricate numbers, the meter stays empty. Grok and OpenCode are likewise not covered.
 
+This fork also carries desktop `t3 .` / `t3 open` support, Claude probe and terminal hardening, and a few provider fixes. [**`diff_with_master.md`**](./diff_with_master.md) is the full handoff document for everything that differs from upstream — themes, rationale, pitfalls, and the open follow-ups left by the last upstream merge.
+
 ## Installation
 
 > [!WARNING]
