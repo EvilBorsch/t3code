@@ -83,6 +83,7 @@ describe("probeClaudeCapabilities", () => {
           | undefined;
 
         expect(invocation?.options?.cwd).toBeUndefined();
+        expect(invocation?.options?.cwd).not.toBe(process.cwd());
       }),
     );
 

@@ -12,6 +12,8 @@
  *
  * @module provider/Drivers/ClaudeDriver
  */
+import * as NodeOS from "node:os";
+
 import { ClaudeSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
@@ -120,7 +122,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
-      const { cwd } = yield* ServerConfig;
+      // Обязательно нейтральный каталог, а не cwd сервера: Claude Code при
+      // инициализации сканирует рабочую директорию, и в большом дереве это
+      // занимает десятки секунд. У десктопа cwd — домашний каталог, где probe
+      // не укладывался в таймаут и провайдер уходил в "Needs attention"
+      // (в /tmp — доли секунды, в $HOME — около минуты).
+      const probeCwd = NodeOS.tmpdir();
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
@@ -156,11 +163,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         capacity: 1,
         timeToLive: CAPABILITIES_PROBE_TTL,
         lookup: () =>
-          probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
+          probeClaudeCapabilities(effectiveConfig, processEnv, probeCwd).pipe(
             Effect.provideService(Path.Path, path),
           ),
       });
-      const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
+      const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, probeCwd);
 
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,
