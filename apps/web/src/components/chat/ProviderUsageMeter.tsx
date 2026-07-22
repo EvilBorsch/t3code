@@ -44,13 +44,13 @@ function UsageWindowCircle(props: {
           <button
             type="button"
             className={cn(
-              "inline-flex size-6 cursor-pointer items-center justify-center rounded-full border border-transparent text-muted-foreground outline-none transition-colors",
+              "inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-transparent text-muted-foreground outline-none transition-colors sm:h-8 sm:w-8",
               "hover:bg-accent data-[pressed]:bg-accent",
               "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
             )}
             aria-label={`${title}: ${percentText} used. ${resetLabel}`}
           >
-            <span className="relative flex size-4 items-center justify-center">
+            <span className="relative flex size-6 items-center justify-center">
               <svg
                 viewBox="0 0 24 24"
                 className="-rotate-90 absolute inset-0 size-full transform-gpu"
@@ -78,7 +78,7 @@ function UsageWindowCircle(props: {
                 />
               </svg>
               <span
-                className="relative select-none text-[6.5px] font-semibold leading-none tracking-tight"
+                className="relative select-none text-[9px] font-semibold leading-none tracking-tight"
                 aria-hidden="true"
               >
                 {window.badge}
