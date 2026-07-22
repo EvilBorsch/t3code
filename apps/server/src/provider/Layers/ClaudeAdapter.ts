@@ -2765,6 +2765,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           message,
         );
         return;
+      case "model_refusal_fallback":
+        // Safety-классификатор отклонил запрос (stop_reason "refusal"), и CLI
+        // повторил ход на fallback-модели, закрепив её за сессией. Синхронизируем
+        // currentApiModelId с фактической моделью CLI: тогда следующий sendTurn с
+        // выбранной пользователем моделью снова вызовет setModel и вернёт её.
+        context.currentApiModelId = message.fallback_model;
+        yield* offerRuntimeEvent({
+          ...base,
+          type: "model.rerouted",
+          payload: {
+            fromModel: message.original_model,
+            toModel: message.fallback_model,
+            reason: message.api_refusal_category
+              ? `refusal:${message.api_refusal_category}`
+              : "refusal",
+          },
+        });
+        return;
       default:
         yield* emitRuntimeWarning(
           context,

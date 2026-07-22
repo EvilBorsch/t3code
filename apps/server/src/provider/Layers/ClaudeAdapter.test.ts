@@ -2911,6 +2911,53 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("emits model.rerouted when Claude falls back after a safety refusal", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const reroutedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "model.rerouted"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "model_refusal_fallback",
+        trigger: "refusal",
+        direction: "retry",
+        original_model: "claude-fable-5",
+        fallback_model: "claude-opus-4-8",
+        request_id: null,
+        api_refusal_category: "cyber",
+        content: "Model switched due to safety refusal.",
+        session_id: "550e8400-e29b-41d4-a716-446655440000",
+        uuid: "model-refusal-fallback-1",
+      } as unknown as SDKMessage);
+
+      const [event] = Array.from(yield* Fiber.join(reroutedFiber));
+      assert.equal(event?.type, "model.rerouted");
+      if (event?.type === "model.rerouted") {
+        assert.deepEqual(event.payload, {
+          fromModel: "claude-fable-5",
+          toModel: "claude-opus-4-8",
+          reason: "refusal:cyber",
+        });
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("uses an app-generated Claude session id for fresh sessions", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

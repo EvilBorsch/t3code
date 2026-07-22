@@ -436,6 +436,31 @@ export function runtimeEventToActivities(
       ];
     }
 
+    case "model.rerouted": {
+      // Провайдер сменил модель посреди сессии (например, safety-фолбэк
+      // Fable → Opus у Claude или reroute у Codex) — показываем это в work log,
+      // чтобы пользователь видел, что диалог продолжается на другой модели.
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "model.rerouted",
+          summary: truncateDetail(
+            `Model switched: ${event.payload.fromModel} → ${event.payload.toModel} (${event.payload.reason})`,
+            120,
+          ),
+          payload: {
+            fromModel: event.payload.fromModel,
+            toModel: event.payload.toModel,
+            reason: event.payload.reason,
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "turn.plan.updated": {
       return [
         {
