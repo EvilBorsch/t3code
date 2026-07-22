@@ -14,6 +14,7 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ProviderItemId,
   ThreadId,
@@ -26,6 +27,7 @@ export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  searchThreads: "orchestration.searchThreads",
   replayEvents: "orchestration.replayEvents",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
@@ -1248,6 +1250,24 @@ export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThr
 export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
 export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
 
+export const THREAD_MESSAGE_SEARCH_MIN_QUERY_CHARS = 3;
+export const THREAD_MESSAGE_SEARCH_MAX_QUERY_CHARS = 256;
+export const THREAD_MESSAGE_SEARCH_MAX_RESULTS = 200;
+
+export const OrchestrationSearchThreadsInput = Schema.Struct({
+  query: TrimmedNonEmptyString.check(
+    Schema.isMinLength(THREAD_MESSAGE_SEARCH_MIN_QUERY_CHARS),
+    Schema.isMaxLength(THREAD_MESSAGE_SEARCH_MAX_QUERY_CHARS),
+  ),
+  limit: PositiveInt.check(Schema.isLessThanOrEqualTo(THREAD_MESSAGE_SEARCH_MAX_RESULTS)),
+});
+export type OrchestrationSearchThreadsInput = typeof OrchestrationSearchThreadsInput.Type;
+
+export const OrchestrationSearchThreadsResult = Schema.Struct({
+  threadIds: Schema.Array(ThreadId),
+});
+export type OrchestrationSearchThreadsResult = typeof OrchestrationSearchThreadsResult.Type;
+
 export const OrchestrationReplayEventsInput = Schema.Struct({
   fromSequenceExclusive: NonNegativeInt,
 });
@@ -1268,6 +1288,10 @@ export const OrchestrationRpcSchemas = {
   getFullThreadDiff: {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
+  },
+  searchThreads: {
+    input: OrchestrationSearchThreadsInput,
+    output: OrchestrationSearchThreadsResult,
   },
   replayEvents: {
     input: OrchestrationReplayEventsInput,

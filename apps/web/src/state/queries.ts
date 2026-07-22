@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   type CheckpointDiffTarget,
   type ComposerPathSearchTarget,
@@ -10,6 +11,11 @@ import type {
   ThreadId,
   VcsListRefsResult,
   VcsRef,
+} from "@t3tools/contracts";
+import {
+  THREAD_MESSAGE_SEARCH_MAX_QUERY_CHARS,
+  THREAD_MESSAGE_SEARCH_MAX_RESULTS,
+  THREAD_MESSAGE_SEARCH_MIN_QUERY_CHARS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
@@ -25,6 +31,7 @@ import { vcsEnvironment } from "./vcs";
 
 const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 120;
 const COMPOSER_PATH_SEARCH_LIMIT = 80;
+const THREAD_MESSAGE_SEARCH_DEBOUNCE_MS = 120;
 const VCS_REF_LIST_LIMIT = 100;
 const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
 const INITIAL_BRANCH_CURSORS = [undefined] as const;
@@ -61,6 +68,74 @@ export function useThreadDetail(
     error: Option.getOrNull(state.error),
     isPending: state.status === "synchronizing",
     isDeleted: state.status === "deleted",
+  };
+}
+
+export function useThreadMessageSearch(input: {
+  readonly environmentIds: ReadonlyArray<EnvironmentId>;
+  readonly query: string;
+  readonly enabled: boolean;
+}) {
+  const normalizedQuery = useMemo(
+    () =>
+      input.query
+        .trim()
+        .toLocaleLowerCase()
+        .replace(/\s+/g, " ")
+        .slice(0, THREAD_MESSAGE_SEARCH_MAX_QUERY_CHARS),
+    [input.query],
+  );
+  const debouncedQuery = useDebouncedValue(normalizedQuery, THREAD_MESSAGE_SEARCH_DEBOUNCE_MS);
+  const searches = useMemo(
+    () =>
+      input.enabled && debouncedQuery.length >= THREAD_MESSAGE_SEARCH_MIN_QUERY_CHARS
+        ? input.environmentIds.map((environmentId) => ({
+            environmentId,
+            atom: orchestrationEnvironment.searchThreads({
+              environmentId,
+              input: {
+                query: debouncedQuery,
+                limit: THREAD_MESSAGE_SEARCH_MAX_RESULTS,
+              },
+            }),
+          }))
+        : [],
+    [debouncedQuery, input.enabled, input.environmentIds],
+  );
+  const resultsAtom = useMemo(
+    () =>
+      Atom.make((get) =>
+        searches.map((search) => ({
+          environmentId: search.environmentId,
+          result: get(search.atom),
+        })),
+      ).pipe(Atom.withLabel("web:thread-message-search")),
+    [searches],
+  );
+  const results = useAtomValue(resultsAtom);
+  const isCurrentQuery = normalizedQuery === debouncedQuery;
+  const threadKeys = useMemo(() => {
+    const keys = new Set<string>();
+    if (!isCurrentQuery) {
+      return keys;
+    }
+
+    for (const entry of results) {
+      const value = Option.getOrNull(AsyncResult.value(entry.result));
+      for (const threadId of value?.threadIds ?? []) {
+        keys.add(scopedThreadKey(scopeThreadRef(entry.environmentId, threadId)));
+      }
+    }
+    return keys;
+  }, [isCurrentQuery, results]);
+  const isSearchEnabled =
+    input.enabled && normalizedQuery.length >= THREAD_MESSAGE_SEARCH_MIN_QUERY_CHARS;
+
+  return {
+    query: isSearchEnabled && isCurrentQuery ? debouncedQuery : "",
+    threadKeys,
+    isPending:
+      isSearchEnabled && (!isCurrentQuery || results.some((entry) => entry.result.waiting)),
   };
 }
 

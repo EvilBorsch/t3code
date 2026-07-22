@@ -11,6 +11,7 @@ import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
+  OrchestrationSearchThreadsInput,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
   OrchestrationProposedPlan,
@@ -35,6 +36,9 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
+const decodeOrchestrationSearchThreadsInput = Schema.decodeUnknownEffect(
+  OrchestrationSearchThreadsInput,
+);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
@@ -49,6 +53,26 @@ const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPaylo
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+
+it.effect("validates and trims thread message search input", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationSearchThreadsInput({
+      query: "  привет  ",
+      limit: 200,
+    });
+    assert.strictEqual(parsed.query, "привет");
+    assert.strictEqual(parsed.limit, 200);
+
+    const shortQuery = yield* Effect.exit(
+      decodeOrchestrationSearchThreadsInput({ query: "ab", limit: 20 }),
+    );
+    const excessiveLimit = yield* Effect.exit(
+      decodeOrchestrationSearchThreadsInput({ query: "message", limit: 201 }),
+    );
+    assert.strictEqual(shortQuery._tag, "Failure");
+    assert.strictEqual(excessiveLimit._tag, "Failure");
+  }),
+);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {

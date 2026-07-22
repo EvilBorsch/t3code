@@ -2,6 +2,7 @@ import { MessageId, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { ProjectionThreadMessageRepository } from "../Services/ProjectionThreadMessages.ts";
 import { ProjectionThreadMessageRepositoryLive } from "./ProjectionThreadMessages.ts";
@@ -12,6 +13,90 @@ const layer = it.layer(
 );
 
 layer("ProjectionThreadMessageRepository", (it) => {
+  it.effect("searches active threads by Unicode message content", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const activeThreadId = ThreadId.make("thread-message-search-active");
+      const archivedThreadId = ThreadId.make("thread-message-search-archived");
+      const createdAt = "2026-07-22T08:00:00.000Z";
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          deleted_at,
+          archived_at
+        )
+        VALUES
+          (
+            ${activeThreadId},
+            'project-message-search',
+            'Active thread',
+            '{"instanceId":"codex","model":"gpt-5"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            ${createdAt},
+            '2026-07-22T08:00:02.000Z',
+            NULL,
+            NULL
+          ),
+          (
+            ${archivedThreadId},
+            'project-message-search',
+            'Archived thread',
+            '{"instanceId":"codex","model":"gpt-5"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            ${createdAt},
+            '2026-07-22T08:00:01.000Z',
+            NULL,
+            '2026-07-22T08:00:03.000Z'
+          )
+      `;
+
+      yield* repository.upsert({
+        messageId: MessageId.make("message-search-active"),
+        threadId: activeThreadId,
+        turnId: null,
+        role: "user",
+        text: "Привет из нужного диалога",
+        isStreaming: false,
+        createdAt,
+        updatedAt: createdAt,
+      });
+      yield* repository.upsert({
+        messageId: MessageId.make("message-search-archived"),
+        threadId: archivedThreadId,
+        turnId: null,
+        role: "assistant",
+        text: "Привет из архивного диалога",
+        isStreaming: false,
+        createdAt,
+        updatedAt: createdAt,
+      });
+
+      const matches = yield* repository.searchThreadIds({ query: "ПРИВЕТ", limit: 20 });
+
+      assert.deepStrictEqual(matches, [activeThreadId]);
+    }),
+  );
+
   it.effect("preserves existing attachments when upsert omits attachments", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionThreadMessageRepository;

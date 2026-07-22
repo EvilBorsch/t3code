@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
-import { ChatAttachment } from "@t3tools/contracts";
+import { ChatAttachment, ThreadId } from "@t3tools/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -15,6 +15,7 @@ import {
   DeleteProjectionThreadMessagesInput,
   ListProjectionThreadMessagesInput,
   ProjectionThreadMessage,
+  SearchProjectionThreadMessagesInput,
 } from "../Services/ProjectionThreadMessages.ts";
 
 const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
@@ -23,6 +24,10 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
   }),
 );
+
+const ProjectionThreadMessageSearchRow = Schema.Struct({
+  threadId: ThreadId,
+});
 
 function toProjectionThreadMessage(
   row: Schema.Schema.Type<typeof ProjectionThreadMessageDbRowSchema>,
@@ -146,6 +151,28 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       `,
   });
 
+  const searchProjectionThreadIds = SqlSchema.findAll({
+    Request: SearchProjectionThreadMessagesInput,
+    Result: ProjectionThreadMessageSearchRow,
+    execute: ({ query, limit }) => {
+      const phrase = `"${query.replaceAll(`"`, `""`)}"`;
+      return sql`
+        SELECT messages.thread_id AS "threadId"
+        FROM projection_thread_messages_search
+        INNER JOIN projection_thread_messages AS messages
+          ON messages.rowid = projection_thread_messages_search.rowid
+        INNER JOIN projection_threads AS threads
+          ON threads.thread_id = messages.thread_id
+        WHERE projection_thread_messages_search MATCH ${phrase}
+          AND threads.deleted_at IS NULL
+          AND threads.archived_at IS NULL
+        GROUP BY messages.thread_id
+        ORDER BY MAX(threads.updated_at) DESC, messages.thread_id ASC
+        LIMIT ${limit}
+      `;
+    },
+  });
+
   const upsert: ProjectionThreadMessageRepositoryShape["upsert"] = (row) =>
     upsertProjectionThreadMessageRow(row).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionThreadMessageRepository.upsert:query")),
@@ -167,6 +194,14 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       Effect.map((rows) => rows.map(toProjectionThreadMessage)),
     );
 
+  const searchThreadIds: ProjectionThreadMessageRepositoryShape["searchThreadIds"] = (input) =>
+    searchProjectionThreadIds(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionThreadMessageRepository.searchThreadIds:query"),
+      ),
+      Effect.map((rows) => rows.map((row) => row.threadId)),
+    );
+
   const deleteByThreadId: ProjectionThreadMessageRepositoryShape["deleteByThreadId"] = (input) =>
     deleteProjectionThreadMessageRows(input).pipe(
       Effect.mapError(
@@ -178,6 +213,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
     upsert,
     getByMessageId,
     listByThreadId,
+    searchThreadIds,
     deleteByThreadId,
   } satisfies ProjectionThreadMessageRepositoryShape;
 });

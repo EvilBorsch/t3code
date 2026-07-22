@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { Thread } from "../types";
 import {
   buildThreadActionItems,
@@ -136,6 +137,46 @@ describe("buildThreadActionItems", () => {
 
     expect(groups).toHaveLength(1);
     expect(groups[0]?.items.map((item) => item.value)).toEqual(["thread:project-context-only"]);
+  });
+
+  it("finds message-content matches after stronger title matches", () => {
+    const messageMatchThreadId = ThreadId.make("thread-message-match");
+    const threadItems = buildThreadActionItems({
+      threads: [
+        makeThread({
+          id: messageMatchThreadId,
+          title: "Unrelated discussion",
+          updatedAt: "2026-03-20T00:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("thread-title-match"),
+          title: "Needle in the title",
+          createdAt: "2026-03-02T00:00:00.000Z",
+          updatedAt: "2026-03-19T00:00:00.000Z",
+        }),
+      ],
+      projectTitleById: new Map([[PROJECT_ID, "Project"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      messageMatchThreadKeys: new Set([
+        scopedThreadKey(scopeThreadRef(LOCAL_ENVIRONMENT_ID, messageMatchThreadId)),
+      ]),
+      messageSearchQuery: "needle",
+      runThread: async (_thread) => undefined,
+    });
+
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "needle",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: threadItems,
+    });
+
+    expect(groups[0]?.items.map((item) => item.value)).toEqual([
+      "thread:thread-title-match",
+      "thread:thread-message-match",
+    ]);
   });
 
   it("filters archived threads out of thread search items", () => {
