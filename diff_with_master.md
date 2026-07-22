@@ -8,8 +8,10 @@
 > `fix-claude-usage-master` (merged current `origin/main`). Published as
 > [`EvilBorsch/t3code`](https://github.com/EvilBorsch/t3code), a fork of `pingdotgg/t3code`.
 
-**Sync status (at time of writing):** **1 commit behind** / **14 commits ahead** of
-`origin/main`. Re-check with:
+**Sync status (2026-07-22, against the locally cached `origin/main` — no fetch performed):**
+**4 commits behind** / **20 commits ahead**. The working tree is clean apart from the
+untracked local planning docs in `docs/superpowers/` (not product code, intentionally not
+committed). Re-check with:
 
 ```bash
 git fetch origin main
@@ -36,16 +38,27 @@ git diff --stat origin/main...HEAD
 | `a09e00f6e` | README section describing this fork                                         |
 | `474aa329d` | **Merge current `origin/main`** — see Theme E for the reconciliations       |
 | `45d8565aa` | Probe Claude capabilities from a neutral directory again (desktop hang fix) |
+| `5cb52fe93` | Refresh this handoff doc for the post-merge branch state                    |
+| `e576c2043` | **Thread message search** — FTS5 + `searchThreads` RPC + command palette    |
+| `43b6367ec` | **Composer OS file drop** → path mentions via `getPathForFile`              |
+| `9e6ae2d1f` | **Model reroute notices** in the work log (Claude safety fallback, Codex)   |
+| `253d416ab` | Enlarge the composer usage rings for legibility                             |
+| `(HEAD)`    | This handoff doc refresh                                                    |
 
 ## Product themes (all intentional deltas)
 
-This branch is **not** a single-feature branch. It has five themes:
+This branch is **not** a single-feature branch. It has six themes:
 
 1. **Claude auth / provider reliability** — probe must be robust and must not run in a huge directory. **Much of the original auth-detection half was replaced by upstream during the `474aa329d` merge — read Theme A before trusting older notes.**
 2. **Terminal / node-pty under Electron** — spawn-helper resolution through `app.asar` → `app.asar.unpacked`; attach must not hide error events.
 3. **`t3 .` / `t3 open` → desktop workspace + new draft** — CLI launches **installed Nightly** (not local Alpha) with open-workspace intent; desktop queues intent (argv / second-instance / pending-file); renderer creates project + draft (pencil semantics). Includes local-dev isolation so a rebuilt desktop can run beside installed Nightly when explicitly opted in.
 4. **Account usage limits** — daily/weekly rate-limit rings in the composer and a limits row per provider card, polled from each provider CLI rather than inferred from turns. See Theme D.
 5. **Merge reconciliations** — places where upstream reworked the same code this branch touched. See Theme E.
+6. **Timeline ergonomics** — turn-fold prompt preview for long Codex prompts + smaller default changed-files trees. See Theme F.
+
+Plus three features landed on 2026-07-22 (`e576c2043`, `43b6367ec`, `9e6ae2d1f`) — thread
+message search, composer OS file drop, and model-reroute notices. See _Landed 2026-07-22_
+after Theme F.
 
 ---
 
@@ -395,6 +408,101 @@ Upstream had independently reworked several areas this branch touches. What was 
 
 ---
 
+## Theme F — Timeline ergonomics (`70cbd80fe`)
+
+### Problem
+
+On settled turns the user's prompt bubble scrolled off-screen behind the "Worked for …"
+fold and huge auto-expanded changed-files trees, so it was hard to tell **which prompt** a
+fold belonged to.
+
+### Behavior now
+
+1. **Turn-fold prompt preview** — each fold row carries `userPromptPreview` (the preceding
+   user prompt, whitespace-collapsed, truncated to ~140 chars) + `userMessageId`, rendered on
+   the "Worked for …" row so long prompts stay identifiable after folding.
+2. **Smaller default diffs** — changed-file directory trees auto-expand only when the diff is
+   small (`CHANGED_FILES_DEFAULT_EXPAND_MAX = 12` files); larger trees start collapsed.
+
+### Files
+
+| Path                                                          | Change                                    |
+| ------------------------------------------------------------- | ----------------------------------------- |
+| `apps/web/src/components/chat/MessagesTimeline.logic.ts`      | fold preview derivation + expand constant |
+| `apps/web/src/components/chat/MessagesTimeline.tsx`           | renders preview on the fold row           |
+| `apps/web/src/components/chat/MessagesTimeline.logic.test.ts` | preview + expand-threshold coverage       |
+
+Related (same commit family, already covered elsewhere): `1a4952fec` turn-scoped assistant
+message IDs also touch `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts`
+(+ its test) — assistant segment message IDs are namespaced by `turn:` so `session/load`
+replays cannot collide (see Theme E, ACP assistant item IDs row).
+
+---
+
+## Landed 2026-07-22 — search, file drop, model-reroute notices
+
+Committed as `e576c2043` (search), `43b6367ec` (file drop), `9e6ae2d1f` (model reroute),
+`253d416ab` (usage-ring polish). Three features plus polish:
+
+### `e576c2043` — Thread message search (FTS5 + command palette)
+
+Search chat **message text** from the command palette, not just thread titles/branches.
+
+- Migration `033_ProjectionThreadMessageSearch` — FTS5 **trigram** virtual table
+  `projection_thread_messages_search` (external content on `projection_thread_messages`)
+  plus insert/delete/update triggers keeping it in sync.
+- New RPC `orchestration.searchThreads` (`WsOrchestrationSearchThreadsRpc`): query
+  3–256 chars, `limit ≤ 200`, returns matching `threadIds`
+  (`THREAD_MESSAGE_SEARCH_*` constants in `packages/contracts/src/orchestration.ts`).
+- Server chain: `ProjectionThreadMessages.searchThreads` →
+  `ProjectionSnapshotQuery.searchThreadIds` → handler in `apps/server/src/ws.ts`.
+- Web: search query in `apps/web/src/state/queries.ts`; `CommandPalette.logic.ts` injects the
+  query into `searchTerms` of threads whose messages matched, so message hits surface through
+  the existing thread rows.
+- Several server tests gained `searchThreadIds` stubs for the widened
+  `ProjectionSnapshotQuery` interface (`OrchestrationEngine.test`, `serverRuntimeStartup.test`,
+  `ProviderSessionReaper.test`, `ProjectSetupScriptRunner.test`, `CheckpointDiffQuery.test`).
+
+### `43b6367ec` — Composer OS file drop → path mentions
+
+Dropping **non-image** files from the OS onto the composer inserts an `@`-mention with the
+absolute path instead of failing; images keep the existing attachment path.
+
+- `DesktopBridge.getPathForFile?` in `packages/contracts/src/ipc.ts` + `preload.ts`
+  (Electron `webUtils.getPathForFile`; `undefined` in browser builds).
+- `apps/web/src/components/chat/composerFileDrop.ts` (**new**) — `planComposerFileDrop`:
+  images → attachments, other files → serialized file-link mentions, web build without a
+  path resolver → explanatory error instead of a mention.
+- `ChatComposer.tsx` wires the plan into the drop handler.
+
+### `9e6ae2d1f` — Model reroute notice (Claude safety fallback Fable → Opus)
+
+When the Fable safety classifier refuses a request and Claude Code retries the turn on the
+fallback model (Opus), the dialog silently continued on another model with no UI signal.
+
+- `ClaudeAdapter` now handles the SDK `system/model_refusal_fallback` message (previously it
+  fell into the unknown-system-message warning) → emits the pre-existing but previously
+  unconsumed `model.rerouted` runtime event with
+  `{fromModel, toModel, reason: "refusal[:<category>]"}` — and resyncs `currentApiModelId`
+  to the fallback model, so the next `sendTurn` with the user's selected model re-asserts it
+  via `setModel` instead of silently staying on the fallback forever.
+- `ProviderRuntimeIngestion` maps `model.rerouted` → an info work-log activity, e.g.
+  _"Model switched: claude-fable-5 → claude-opus-4-8 (refusal:cyber)"_. This also makes
+  Codex `model/rerouted` notifications visible — they were emitted but dropped by ingestion.
+- Tests: `ProviderRuntimeIngestion.modelRerouted.test.ts` (**new**) + a
+  `model_refusal_fallback` case in `ClaudeAdapter.test.ts`.
+- **Known gap:** `retracted_message_uuids` from the fallback message are not processed, so a
+  refused partial answer may remain visible in the transcript (follow-up).
+
+### Miscellaneous
+
+- `253d416ab` `ProviderUsageMeter.tsx` — larger usage rings / tap targets, bigger badge text
+  (Theme D legibility polish).
+- `docs/superpowers/` (untracked, intentionally uncommitted) — local skills/tooling docs,
+  not product code.
+
+---
+
 ## Important pitfalls
 
 1. **Stock Nightly/Alpha must include Theme C desktop code** (including pending-file). CLI alone is not enough; old apps ignore `--open-workspace` / never read the pending file.
@@ -489,6 +597,7 @@ vp run typecheck
 
 ### Modified
 
+- `README.md`
 - `apps/desktop/src/app/DesktopApp.ts`
 - `apps/desktop/src/app/DesktopClerk.ts`
 - `apps/desktop/src/app/DesktopEnvironment.ts`
@@ -502,6 +611,9 @@ vp run typecheck
 - `apps/desktop/src/window/DesktopApplicationMenu.test.ts`
 - `apps/desktop/src/window/DesktopWindow.ts`
 - `apps/server/src/bin.ts`
+- `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts`
+- `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts`
+- `apps/server/src/provider/providerMaintenanceRunner.test.ts`
 - `apps/server/src/server.ts`
 - `apps/server/src/serverRuntimeStartup.ts`
 - `apps/server/src/provider/Drivers/ClaudeDriver.ts`
@@ -520,13 +632,32 @@ vp run typecheck
 - `apps/web/src/components/AppSidebarLayout.tsx`
 - `apps/web/src/components/ChatView.tsx`
 - `apps/web/src/components/chat/ChatComposer.tsx`
+- `apps/web/src/components/chat/MessagesTimeline.tsx`
+- `apps/web/src/components/chat/MessagesTimeline.logic.ts`
+- `apps/web/src/components/chat/MessagesTimeline.logic.test.ts`
 - `apps/web/src/components/chat/ProviderStatusBanner.tsx`
 - `apps/web/src/components/settings/ProviderInstanceCard.tsx`
 - `apps/server/src/provider/acp/AcpSessionRuntime.ts`
 - `packages/client-runtime/src/state/threads.ts`
+- `packages/client-runtime/src/state/threads-sync.test.ts`
 - `packages/contracts/src/ipc.ts`
 - `packages/contracts/src/server.ts`
 - `packages/shared/package.json`
+
+### Landed 2026-07-22 (commits `e576c2043` … `253d416ab` — see _Landed 2026-07-22_)
+
+Added:
+
+- `apps/server/src/persistence/Migrations/033_ProjectionThreadMessageSearch.ts` (+ test)
+- `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.modelRerouted.test.ts`
+- `apps/web/src/components/chat/composerFileDrop.ts` (+ test)
+
+Modified (27 files total): thread-search chain (`ProjectionThreadMessages*`,
+`ProjectionSnapshotQuery*`, `Migrations.ts`, `ws.ts`, `rpc.ts`, `orchestration.ts`,
+`CommandPalette*`, `queries.ts`, client-runtime `orchestration.ts`), file-drop chain
+(`ipc.ts`, `preload.ts`, `ChatComposer.tsx`), model-reroute chain (`ClaudeAdapter*`,
+`ProviderRuntimeIngestion.ts`), `ProviderUsageMeter.tsx`, and `searchThreadIds` stubs in
+five server test files.
 
 ---
 
