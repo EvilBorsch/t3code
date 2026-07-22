@@ -1032,6 +1032,12 @@ export interface DesktopBridge {
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   /**
+   * Resolve the OS absolute path of a File dropped from the OS. Present iff
+   * the renderer is hosted by the Electron desktop build; browsers cannot
+   * expose file paths, so web builds have `getPathForFile === undefined`.
+   */
+  getPathForFile?: (file: File) => string;
+  /**
    * Desktop-only preview surface. Present iff the renderer is hosted by the
    * Electron desktop build; web builds have `preview === undefined`.
    */

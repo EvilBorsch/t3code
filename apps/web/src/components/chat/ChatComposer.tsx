@@ -44,6 +44,7 @@ import {
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+import { planComposerFileDrop } from "./composerFileDrop";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -1888,7 +1889,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     const files = Array.from(event.dataTransfer.files);
-    addComposerImages(files);
+    const plan = planComposerFileDrop(files, window.desktopBridge?.getPathForFile);
+    addComposerImages(plan.imageFiles);
+    if (plan.error !== null && activeThreadId) {
+      setThreadError(activeThreadId, plan.error);
+    }
+    if (plan.mentionText !== null) {
+      // Вставка сама фокусирует редактор на следующем кадре; синхронный фокус
+      // во время drop затирает вставленный меншен устаревшим состоянием.
+      if (!insertComposerTextAtEnd(plan.mentionText, { ensureLeadingBoundary: true })) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to add to chat",
+          description: "The composer is busy; try again once it is ready.",
+        });
+      }
+      return;
+    }
     focusComposer();
   };
 
