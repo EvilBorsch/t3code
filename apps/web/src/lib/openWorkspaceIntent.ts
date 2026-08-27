@@ -40,7 +40,7 @@ export async function openWorkspaceInDesktop(input: {
       };
     };
   }) => Promise<AtomCommandResult<unknown, unknown>>;
-  readonly handleNewThread: (projectRef: ScopedProjectRef) => Promise<void>;
+  readonly handleNewThread: (projectRef: ScopedProjectRef) => Promise<unknown>;
   readonly expandProject?: (projectRef: ScopedProjectRef) => void;
   readonly onError?: (title: string, description: string) => void;
 }): Promise<boolean> {

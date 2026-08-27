@@ -49,12 +49,6 @@ export const DeleteProjectionThreadMessagesInput = Schema.Struct({
 });
 export type DeleteProjectionThreadMessagesInput = typeof DeleteProjectionThreadMessagesInput.Type;
 
-export const SearchProjectionThreadMessagesInput = Schema.Struct({
-  query: Schema.String,
-  limit: Schema.Int,
-});
-export type SearchProjectionThreadMessagesInput = typeof SearchProjectionThreadMessagesInput.Type;
-
 /**
  * ProjectionThreadMessageRepositoryShape - Service API for projected thread messages.
  */
@@ -83,13 +77,6 @@ export interface ProjectionThreadMessageRepositoryShape {
   readonly listByThreadId: (
     input: ListProjectionThreadMessagesInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
-
-  /**
-   * Найти активные треды, содержащие указанный текст сообщения.
-   */
-  readonly searchThreadIds: (
-    input: SearchProjectionThreadMessagesInput,
-  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionRepositoryError>;
 
   /**
    * Delete projected thread messages by thread.
