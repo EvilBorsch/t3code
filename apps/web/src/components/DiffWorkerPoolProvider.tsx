@@ -73,6 +73,9 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
       }}
       highlighterOptions={{
         theme: diffThemeName,
+        // Тот же oniguruma, что и на главном потоке: на JS-движке одна Go-структура
+        // с выровненными полями занимает воркер на минуты.
+        preferredHighlighter: "shiki-wasm",
         tokenizeMaxLineLength: 1_000,
         useTokenTransformer: true,
       }}

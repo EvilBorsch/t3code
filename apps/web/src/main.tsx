@@ -17,6 +17,7 @@ import {
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
 import { clerkAppearance } from "./components/clerk/clerkAppearance";
+import { claimSyntaxHighlighterEngine } from "./lib/syntaxHighlighting";
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
 const history = isElectron ? createHashHistory() : createBrowserHistory();
@@ -27,6 +28,10 @@ if (isElectron) {
   syncDocumentElectronPlatformClasses(navigator.platform);
   syncDocumentWindowControlsOverlayClass();
 }
+
+// До первого рендера: движок подсветки достаётся тому, кто позовёт highlighter
+// первым.
+claimSyntaxHighlighterEngine();
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
