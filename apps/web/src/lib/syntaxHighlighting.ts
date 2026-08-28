@@ -44,5 +44,7 @@ export function getSyntaxHighlighterPromise(language: string): Promise<DiffsHigh
  * подвесит вместе с собой весь чат.
  */
 export function claimSyntaxHighlighterEngine(): void {
-  void getSyntaxHighlighterPromise("text");
+  // Ошибку глотаем: захват движка — это оптимизация, а настоящий отчёт об
+  // ошибке придёт от того, кто реально просит подсветку в рендере.
+  void getSyntaxHighlighterPromise("text").catch(() => {});
 }

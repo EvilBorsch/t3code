@@ -4,8 +4,9 @@
  * Spawns the rebuilt Electron main from this repo so --open-workspace works
  * without waiting for a Nightly release.
  *
- * Uses a distinct CFBundleIdentifier + userData dir so an already-running
- * installed Nightly/Alpha does not steal the single-instance lock.
+ * Uses a distinct CFBundleIdentifier so an already-running installed
+ * Nightly/Alpha does not steal the single-instance lock: DesktopEnvironment
+ * derives the userData dir from that id, so the two never share a lock path.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -21,14 +22,7 @@ const repoRoot = NodePath.resolve(scriptsDir, "..");
 const desktopDir = NodePath.join(repoRoot, "apps", "desktop");
 const mainEntry = NodePath.join(desktopDir, "dist-electron", "main.cjs");
 const passthroughArgs = process.argv.slice(2);
-const homeDir = process.env.HOME?.trim() || ".";
-const userDataDir = NodePath.join(homeDir, ".t3-local-open", "electron-user-data");
-
-const launch = resolveElectronLaunchCommand([
-  `--user-data-dir=${userDataDir}`,
-  mainEntry,
-  ...passthroughArgs,
-]);
+const launch = resolveElectronLaunchCommand([mainEntry, ...passthroughArgs]);
 
 // electron-launcher returns .../T3 Code (Alpha).app/Contents/MacOS/Electron
 const appBundlePath = NodePath.resolve(launch.electronPath, "..", "..", "..");
@@ -57,7 +51,10 @@ delete childEnv.ELECTRON_RUN_AS_NODE;
 delete childEnv.VITE_DEV_SERVER_URL;
 childEnv.T3CODE_DESKTOP_APP_USER_MODEL_ID =
   childEnv.T3CODE_DESKTOP_APP_USER_MODEL_ID?.trim() || LOCAL_BUNDLE_ID;
-childEnv.T3CODE_HOME = childEnv.T3CODE_HOME?.trim() || NodePath.join(homeDir, ".t3-local-open");
+// T3CODE_HOME намеренно не переопределяем: pending-open-workspace.json пишет
+// CLI-процесс в свой stateDir, и если развести дома, десктоп будет искать
+// интент не там, где он лежит. Изоляция состояния — задача разработчика:
+// заданный T3CODE_HOME наследуют оба процесса.
 
 const child = NodeChildProcess.spawn(launch.electronPath, launch.args, {
   cwd: desktopDir,

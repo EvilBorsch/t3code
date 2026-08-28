@@ -22,7 +22,6 @@ import {
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
-  type AccountInfo as ClaudeAccountInfo,
   query as claudeQuery,
   type Options as ClaudeQueryOptions,
   type SlashCommand as ClaudeSlashCommand,
@@ -427,7 +426,6 @@ export function normalizeClaudeCliEffort(
   }
   if (
     effort === "xhigh" &&
-    model !== "claude-opus-5" &&
     model !== "claude-fable-5" &&
     model !== "claude-opus-5" &&
     model !== "claude-opus-4-8" &&
@@ -643,23 +641,6 @@ type ClaudeCapabilitiesProbe = {
   /** Отсутствует, когда лимиты плана неприменимы (API key, Bedrock, Vertex). */
   readonly usage?: ServerProviderUsage;
 };
-
-function isClaudeAccountAuthenticated(account: ClaudeAccountInfo): boolean {
-  for (const value of [
-    account.email,
-    account.organization,
-    account.subscriptionType,
-    account.tokenSource,
-    account.apiKeySource,
-  ]) {
-    const normalized = value?.trim().toLowerCase();
-    if (normalized && normalized !== "none") {
-      return true;
-    }
-  }
-
-  return account.apiProvider !== undefined && account.apiProvider !== "firstParty";
-}
 
 function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,

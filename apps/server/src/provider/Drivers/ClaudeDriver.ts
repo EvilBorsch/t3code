@@ -27,7 +27,6 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGeneration.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeAdapter } from "../Layers/ClaudeAdapter.ts";
@@ -93,7 +92,6 @@ export type ClaudeDriverEnv =
   | ModelManifest.ModelManifest
   | Path.Path
   | ProviderEventLoggers
-  | ServerConfig
   | ServerSettingsService;
 
 const withInstanceIdentity =

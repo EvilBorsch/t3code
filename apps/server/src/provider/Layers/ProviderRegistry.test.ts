@@ -1964,19 +1964,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             defaultClaudeSettings,
             claudeCapabilities(),
           );
-          assert.strictEqual(
-            status.models.some((model) => model.slug === "claude-opus-5"),
-            false,
-          );
-          assert.strictEqual(
-            status.message,
-            "Claude Code v2.1.218 is too old for Claude Opus 5. Upgrade to v2.1.219 or newer to access it.",
-          );
+          const fable5 = status.models.find((model) => model.slug === "claude-fable-5");
+          assert.strictEqual(fable5?.name, "Claude Fable 5");
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
               const joined = args.join(" ");
-              if (joined === "--version") return { stdout: "2.1.218\n", stderr: "", code: 0 };
+              if (joined === "--version") return { stdout: "2.1.169\n", stderr: "", code: 0 };
               if (joined === "auth status")
                 return {
                   stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',

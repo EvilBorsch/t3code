@@ -1553,6 +1553,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setProviderInputSubmissionError(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
     setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
+    dragDepthRef.current = 0;
     setIsDragOverComposer(false);
   }, [draftId, activeThreadId, promptRef]);
 
@@ -2702,9 +2703,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     event.preventDefault();
     void addComposerImages(imageFiles);
   };
+  // Композер перехватывает дроп у общего обработчика чат-колонки
+  // (workspaceFileDrop): там файлы просто прикрепляются, а здесь путь
+  // превращается в меншен. Без stopPropagation срабатывают оба, и картинка
+  // прикрепляется дважды.
   const onComposerDragEnter = (event: React.DragEvent<HTMLFormElement>) => {
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
+    event.stopPropagation();
     dragDepthRef.current += 1;
     setIsDragOverComposer(true);
   };
@@ -2712,6 +2718,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const onComposerDragOver = (event: React.DragEvent<HTMLFormElement>) => {
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
+    event.stopPropagation();
     event.dataTransfer.dropEffect = "copy";
     setIsDragOverComposer(true);
   };
@@ -2719,6 +2726,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const onComposerDragLeave = (event: React.DragEvent<HTMLFormElement>) => {
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
+    event.stopPropagation();
     const nextTarget = event.relatedTarget;
     if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
     dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
@@ -2730,6 +2738,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const onComposerDrop = (event: React.DragEvent<HTMLFormElement>) => {
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
+    event.stopPropagation();
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     const files = Array.from(event.dataTransfer.files);
@@ -2806,6 +2815,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     if (!isDragOverComposer) return;
     const onWindowDragEnd = () => {
+      dragDepthRef.current = 0;
       setIsDragOverComposer(false);
     };
     window.addEventListener("dragend", onWindowDragEnd);

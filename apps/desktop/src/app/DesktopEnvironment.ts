@@ -184,7 +184,8 @@ const make = Effect.fn("desktop.environment.make")(function* (
     () => defaultAppUserModelId,
   );
   // Custom app ids (local open tooling) must not share Electron userData with the
-  // installed Nightly/Alpha instance — requestSingleInstanceLock keys off that path.
+  // installed Nightly/Alpha instance — the single-instance lock keys off that path,
+  // and DesktopClerk sets userData before taking it.
   const usesCustomAppIdentity = appUserModelId !== defaultAppUserModelId;
   const userDataDirName = usesCustomAppIdentity
     ? appUserModelId.replaceAll(".", "-")

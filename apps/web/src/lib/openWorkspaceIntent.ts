@@ -6,13 +6,14 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
-  DEFAULT_MODEL,
   type DesktopOpenWorkspaceIntent,
   type EnvironmentId,
+  type ModelSelection,
   type ProjectId,
-  ProviderInstanceId,
   type ScopedProjectRef,
+  type ServerProvider,
 } from "@t3tools/contracts";
+import { resolveDefaultProviderModelSelection } from "../providerInstances";
 import { findProjectByPath, inferProjectTitleFromPath } from "./projectPaths";
 import { newProjectId } from "./utils";
 
@@ -27,6 +28,7 @@ export async function openWorkspaceInDesktop(input: {
   readonly intent: DesktopOpenWorkspaceIntent;
   readonly environmentId: EnvironmentId;
   readonly projects: readonly OpenWorkspaceProject[];
+  readonly providers: ReadonlyArray<ServerProvider>;
   readonly createProject: (args: {
     readonly environmentId: EnvironmentId;
     readonly input: {
@@ -34,10 +36,7 @@ export async function openWorkspaceInDesktop(input: {
       readonly title: string;
       readonly workspaceRoot: string;
       readonly createWorkspaceRootIfMissing: boolean;
-      readonly defaultModelSelection: {
-        readonly instanceId: ReturnType<typeof ProviderInstanceId.make>;
-        readonly model: typeof DEFAULT_MODEL;
-      };
+      readonly defaultModelSelection: ModelSelection | null;
     };
   }) => Promise<AtomCommandResult<unknown, unknown>>;
   readonly handleNewThread: (projectRef: ScopedProjectRef) => Promise<unknown>;
@@ -67,10 +66,9 @@ export async function openWorkspaceInDesktop(input: {
         title: inferProjectTitleFromPath(workspaceRoot),
         workspaceRoot,
         createWorkspaceRootIfMissing: true,
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: DEFAULT_MODEL,
-        },
+        // Тот же резолвер, что и в командной палитре: на установке без Codex
+        // хардкод "codex" давал проекту неселектируемую модель.
+        defaultModelSelection: resolveDefaultProviderModelSelection(input.providers, null),
       },
     });
     if (createResult._tag === "Failure") {

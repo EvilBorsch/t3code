@@ -1,6 +1,8 @@
 import type { DesktopOpenWorkspaceIntent } from "@t3tools/contracts";
 import { useEffect, useRef } from "react";
 
+import { useAtomValue } from "@effect/atom-react";
+
 import { isElectron } from "../env";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useClientSettings } from "../hooks/useSettings";
@@ -10,6 +12,7 @@ import {
 } from "../logicalProject";
 import { openWorkspaceInDesktop } from "../lib/openWorkspaceIntent";
 import { useProjects } from "../state/entities";
+import { primaryServerProvidersAtom } from "../state/server";
 import { usePrimaryEnvironment } from "../state/environments";
 import { projectEnvironment } from "../state/projects";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -19,12 +22,14 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 export function DesktopOpenWorkspaceListener() {
   const primaryEnvironment = usePrimaryEnvironment();
   const projects = useProjects();
+  const providers = useAtomValue(primaryServerProvidersAtom);
   const handleNewThread = useNewThreadHandler();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projectsRef = useRef(projects);
+  const providersRef = useRef(providers);
   const primaryEnvironmentRef = useRef(primaryEnvironment);
   const handleNewThreadRef = useRef(handleNewThread);
   const createProjectRef = useRef(createProject);
@@ -32,6 +37,7 @@ export function DesktopOpenWorkspaceListener() {
   const inFlightKeyRef = useRef<string | null>(null);
 
   projectsRef.current = projects;
+  providersRef.current = providers;
   primaryEnvironmentRef.current = primaryEnvironment;
   handleNewThreadRef.current = handleNewThread;
   createProjectRef.current = createProject;
@@ -78,6 +84,7 @@ export function DesktopOpenWorkspaceListener() {
           intent,
           environmentId: environment.environmentId,
           projects: projectsRef.current,
+          providers: providersRef.current,
           createProject: createProjectRef.current,
           handleNewThread: handleNewThreadRef.current,
           expandProject: (projectRef) => {
