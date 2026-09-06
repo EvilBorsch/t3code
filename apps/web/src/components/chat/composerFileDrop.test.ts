@@ -11,9 +11,8 @@ describe("planComposerFileDrop", () => {
       () => "/Users/me/Downloads/log.txt",
     );
     expect(plan).toEqual({
-      imageFiles: [],
+      attachmentFiles: [],
       mentionText: "[log.txt](/Users/me/Downloads/log.txt) ",
-      error: null,
     });
   });
 
@@ -27,7 +26,7 @@ describe("planComposerFileDrop", () => {
       (file) => paths[file.name] ?? "",
     );
     expect(plan.mentionText).toBe("[a.txt](/tmp/a.txt) [b.log](/tmp/b.log) ");
-    expect(plan.error).toBeNull();
+    expect(plan.attachmentFiles).toEqual([]);
   });
 
   it("routes images to the attachment flow untouched", () => {
@@ -36,20 +35,20 @@ describe("planComposerFileDrop", () => {
       [image, makeFile("log.txt", "text/plain")],
       () => "/x/log.txt",
     );
-    expect(plan.imageFiles).toEqual([image]);
+    expect(plan.attachmentFiles).toEqual([image]);
     expect(plan.mentionText).toBe("[log.txt](/x/log.txt) ");
   });
 
-  it("reports an error when the platform cannot resolve paths", () => {
-    const plan = planComposerFileDrop([makeFile("log.txt", "text/plain")], undefined);
-    expect(plan.mentionText).toBeNull();
-    expect(plan.error).toContain("requires the desktop app");
+  it("attaches every file when the platform cannot resolve paths", () => {
+    const file = makeFile("log.txt", "text/plain");
+    const plan = planComposerFileDrop([file], undefined);
+    expect(plan).toEqual({ attachmentFiles: [file], mentionText: null });
   });
 
-  it("reports an error for files without a backing path", () => {
-    const plan = planComposerFileDrop([makeFile("ghost.txt", "text/plain")], () => "");
-    expect(plan.mentionText).toBeNull();
-    expect(plan.error).toContain("ghost.txt");
+  it("attaches files without a backing path", () => {
+    const ghost = makeFile("ghost.txt", "text/plain");
+    const plan = planComposerFileDrop([ghost], () => "");
+    expect(plan).toEqual({ attachmentFiles: [ghost], mentionText: null });
   });
 
   it("escapes paths with spaces via the markdown link serializer", () => {

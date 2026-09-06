@@ -11,7 +11,6 @@ import type {
   ProviderDriverKind,
   ServerProvider,
   ServerProviderUpdateState,
-  ServerProviderUsage,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -49,13 +48,20 @@ export interface ProviderRegistryShape {
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
+  readonly refreshWorkspaceSnapshot: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly cwd: string;
+  }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
   /**
    * Resolve the maintenance capabilities owned by one live provider instance.
    * Falls back to manual-only capabilities when the instance is not live.
+   * `fresh` re-derives ownership from the executable instead of the cache.
    */
   readonly getProviderMaintenanceCapabilitiesForInstance: (
     instanceId: ProviderInstanceId,
     provider: ProviderDriverKind,
+    options?: { readonly fresh?: boolean },
   ) => Effect.Effect<ProviderMaintenanceCapabilities>;
 
   /**
@@ -68,17 +74,6 @@ export interface ProviderRegistryShape {
     readonly instanceId: ProviderInstanceId;
     readonly action: ProviderMaintenanceActionKind;
     readonly state: ServerProviderUpdateState | null;
-  }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
-
-  /**
-   * Apply the latest normalized account usage limits to one configured
-   * instance. The value is projected onto `ServerProvider.usage`, survives
-   * snapshot refreshes and is persisted with the instance status cache so
-   * limits are visible right after a server restart.
-   */
-  readonly setProviderUsage: (input: {
-    readonly instanceId: ProviderInstanceId;
-    readonly usage: ServerProviderUsage;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**

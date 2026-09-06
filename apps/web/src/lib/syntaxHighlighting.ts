@@ -1,19 +1,21 @@
 import {
   getSharedHighlighter,
   type DiffsHighlighter,
+  type HighlighterTypes,
   type SupportedLanguages,
 } from "@pierre/diffs";
 
 import { resolveDiffThemeName } from "./diffRendering";
 
-const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
+/**
+ * Always highlight with the Oniguruma WASM engine — the JS regex engine can
+ * backtrack catastrophically and hang the tokenizing thread. The shared
+ * highlighter is a first-caller-wins singleton, so every creation site must
+ * pass this value.
+ */
+export const PREFERRED_HIGHLIGHTER: HighlighterTypes = "shiki-wasm";
 
-// Только oniguruma (wasm): JS-движок регэкспов уходит в катастрофический
-// бэктрекинг на обычной Go-структуре с выровненными полями — 22 строки
-// токенизируются ~100 секунд и намертво вешают рендер-поток, потому что
-// codeToHtml вызывается синхронно в рендере. На wasm тот же блок — 23 мс
-// с побайтово одинаковым HTML.
-const SYNTAX_HIGHLIGHTER_ENGINE = "shiki-wasm" as const;
+const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
 
 export function getSyntaxHighlighterPromise(language: string): Promise<DiffsHighlighter> {
   const cached = highlighterPromiseCache.get(language);
@@ -22,7 +24,7 @@ export function getSyntaxHighlighterPromise(language: string): Promise<DiffsHigh
   const promise = getSharedHighlighter({
     themes: [resolveDiffThemeName("dark"), resolveDiffThemeName("light")],
     langs: [language as SupportedLanguages],
-    preferredHighlighter: SYNTAX_HIGHLIGHTER_ENGINE,
+    preferredHighlighter: PREFERRED_HIGHLIGHTER,
   }).catch((error) => {
     if (language === "text") {
       highlighterPromiseCache.delete(language);

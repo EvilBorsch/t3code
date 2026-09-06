@@ -8,10 +8,8 @@
 > `fix-claude-usage-master` (merged current `origin/main`). Published as
 > [`EvilBorsch/t3code`](https://github.com/EvilBorsch/t3code), a fork of `pingdotgg/t3code`.
 
-**Sync status (2026-07-22, against the locally cached `origin/main` — no fetch performed):**
-**4 commits behind** / **20 commits ahead**. The working tree is clean apart from the
-untracked local planning docs in `docs/superpowers/` (not product code, intentionally not
-committed). Re-check with:
+**Sync status (2026-09-06, after fetching and merging `origin/main` at `223ff4490`):**
+**0 commits behind** / **30 commits ahead**. Re-check with:
 
 ```bash
 git fetch origin main
@@ -44,6 +42,26 @@ git diff --stat origin/main...HEAD
 | `9e6ae2d1f` | **Model reroute notices** in the work log (Claude safety fallback, Codex)   |
 | `253d416ab` | Enlarge the composer usage rings for legibility                             |
 | `(HEAD)`    | This handoff doc refresh                                                    |
+
+## Merge 2026-09-06 — what upstream absorbed
+
+Upstream `223ff4490` (747 commits) landed several of this branch's features on its own. The
+merge took upstream's versions and retired the fork's duplicates:
+
+| Fork feature                                  | Upstream equivalent                                                              | Resolution                                                                                                                                                                                                                                                                                                                        |
+| --------------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Theme D — account usage limits                | `feat(usage): show Codex and Claude subscription limits on a Limits tab (#9507)` | **Dropped.** `providerUsage.ts`, `ProviderUsageMonitor`, `ProviderUsageMeter.tsx`, `web/lib/providerUsage.ts`, the registry usage overlay and `ServerProvider.usage` are gone. Upstream's `ProviderUsageLimitsIngestion`, `ComposerUsageLimits` and the Limits page replace them and also cover model-scoped and overage windows. |
+| Hard-coded Claude catalog with Opus 5 / xhigh | `feat(models): discover Claude models from remote manifest (#9084)`              | **Dropped.** The manifest already lists Fable 5.1, Opus 5 and Sonnet 5; `modelPickerModelHighlights.ts` was deleted with it.                                                                                                                                                                                                      |
+| `model_refusal_fallback` → `model.rerouted`   | Upstream handles the same SDK message in `ClaudeAdapter`                         | **Dropped** the fork's duplicate case and test; the ingestion mapping to a work-log entry is kept.                                                                                                                                                                                                                                |
+| Composer OS file drop → path mentions         | `feat(server): accept PDF, ZIP, and other file uploads up to 50MB (#8235)`       | **Merged.** `planComposerFileDrop` now yields `attachmentFiles` + `mentionText`: a file with a resolvable path becomes a mention, everything else (images, browser drops, path-less files) goes through upstream's `addComposerAttachments`.                                                                                      |
+| `insertComposerTextAtEnd`                     | Upstream refactored it onto `insertComposerText(text, position, options)`        | Upstream's version; the drop handler still calls `insertComposerTextAtEnd`.                                                                                                                                                                                                                                                       |
+| Warm thread cache healing                     | Upstream added an in-memory `resumeCache` in front of the IndexedDB read         | **Merged.** `isReusableThreadDetailCache` still guards the disk read; a retained in-memory snapshot skips the disk read and the guard.                                                                                                                                                                                            |
+| Oniguruma highlighter                         | Upstream exports `PREFERRED_HIGHLIGHTER = "shiki-wasm"` and passes it everywhere | Upstream's constant; the fork's `claimSyntaxHighlighterEngine()` early claim in `main.tsx` stays.                                                                                                                                                                                                                                 |
+| Claude probe cwd                              | Upstream still passes the server cwd (`ClaudeDriver.ts`)                         | **Kept** `probeCwd = os.tmpdir()` — see Theme A pitfall #10.                                                                                                                                                                                                                                                                      |
+
+Everything else (Themes A–C, E, F, sidebar reveal, `enableAgentBrowserAccess: false`) carried
+over unchanged. `docs/user/` was not touched: none of the surviving fork features are
+described there.
 
 ## Product themes (all intentional deltas)
 
@@ -320,7 +338,10 @@ Verified smoke (post-`6db2e51e9` Nightly install):
 
 ---
 
-## Theme D — Account usage limits
+## Theme D — Account usage limits (retired 2026-09-06)
+
+> **Retired.** Upstream #9507 ships the same feature with a Limits tab; see _Merge 2026-09-06_.
+> The notes below describe the fork's implementation as it was, for archaeology only.
 
 ### Problem
 
