@@ -257,6 +257,21 @@ export function useThreadJumpHintVisibility(): {
   };
 }
 
+/**
+ * Scrolls the open thread's sidebar row into view whenever the route lands on a
+ * different thread. Search and the command palette can jump anywhere in the
+ * list, and without this the highlighted row stays wherever the sidebar happened
+ * to be scrolled, leaving it to be hunted for by hand.
+ */
+export function useRevealActiveThreadRow(threadKey: string | null): void {
+  React.useEffect(() => {
+    if (threadKey === null) return;
+    document
+      .querySelector(`[data-thread-item][data-thread-key="${threadKey}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [threadKey]);
+}
+
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
