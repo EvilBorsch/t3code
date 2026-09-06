@@ -1046,7 +1046,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     null,
   );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
-  const dragDepthRef = useRef(0);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
@@ -1553,7 +1552,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setProviderInputSubmissionError(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
     setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
-    dragDepthRef.current = 0;
     setIsDragOverComposer(false);
   }, [draftId, activeThreadId, promptRef]);
 
@@ -2703,65 +2701,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     event.preventDefault();
     void addComposerImages(imageFiles);
   };
-  // Композер перехватывает дроп у общего обработчика чат-колонки
-  // (workspaceFileDrop): там файлы просто прикрепляются, а здесь путь
-  // превращается в меншен. Без stopPropagation срабатывают оба, и картинка
-  // прикрепляется дважды.
-  const onComposerDragEnter = (event: React.DragEvent<HTMLFormElement>) => {
-    if (!event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
-    event.stopPropagation();
-    dragDepthRef.current += 1;
-    setIsDragOverComposer(true);
-  };
-
-  const onComposerDragOver = (event: React.DragEvent<HTMLFormElement>) => {
-    if (!event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.dataTransfer.dropEffect = "copy";
-    setIsDragOverComposer(true);
-  };
-
-  const onComposerDragLeave = (event: React.DragEvent<HTMLFormElement>) => {
-    if (!event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const nextTarget = event.relatedTarget;
-    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
-    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-    if (dragDepthRef.current === 0) {
-      setIsDragOverComposer(false);
-    }
-  };
-
-  const onComposerDrop = (event: React.DragEvent<HTMLFormElement>) => {
-    if (!event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
-    event.stopPropagation();
-    dragDepthRef.current = 0;
-    setIsDragOverComposer(false);
-    const files = Array.from(event.dataTransfer.files);
-    const plan = planComposerFileDrop(files, window.desktopBridge?.getPathForFile);
-    void addComposerImages(plan.imageFiles);
-    if (plan.error !== null && activeThreadId) {
-      setThreadError(activeThreadId, plan.error);
-    }
-    if (plan.mentionText !== null) {
-      // Вставка сама фокусирует редактор на следующем кадре; синхронный фокус
-      // во время drop затирает вставленный меншен устаревшим состоянием.
-      if (!insertComposerTextAtEnd(plan.mentionText, { ensureLeadingBoundary: true })) {
-        toastManager.add({
-          type: "error",
-          title: "Unable to add to chat",
-          description: "The composer is busy; try again once it is ready.",
-        });
-      }
-      return;
-    }
-    focusComposer();
-  };
-
   const insertComposerTextAtEnd = (
     text: string,
     options?: { ensureLeadingBoundary?: boolean },
@@ -2815,7 +2754,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     if (!isDragOverComposer) return;
     const onWindowDragEnd = () => {
-      dragDepthRef.current = 0;
       setIsDragOverComposer(false);
     };
     window.addEventListener("dragend", onWindowDragEnd);
@@ -2885,8 +2823,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       focusAt: (cursor: number) => {
         composerEditorRef.current?.focusAt(cursor);
       },
+      // Единственный путь для OS-дропов: сюда попадают файлы из общего
+      // обработчика чат-колонки (workspaceFileDrop). Картинки уходят во
+      // вложения, остальные файлы превращаются в меншены с абсолютным путём.
       addDroppedFiles: (files: File[]) => {
-        void addComposerImages(files);
+        const plan = planComposerFileDrop(files, window.desktopBridge?.getPathForFile);
+        void addComposerImages(plan.imageFiles);
+        if (plan.error !== null && activeThreadId) {
+          setThreadError(activeThreadId, plan.error);
+        }
+        if (plan.mentionText !== null) {
+          // Вставка сама фокусирует редактор на следующем кадре; синхронный
+          // фокус во время drop затирает вставленный меншен устаревшим
+          // состоянием.
+          if (!insertComposerTextAtEnd(plan.mentionText, { ensureLeadingBoundary: true })) {
+            toastManager.add({
+              type: "error",
+              title: "Unable to add to chat",
+              description: "The composer is busy; try again once it is ready.",
+            });
+          }
+          return;
+        }
         focusComposer();
       },
       insertTextAtEnd: insertComposerTextAtEnd,
@@ -3036,10 +2994,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onBlurCapture={() => {
         scheduleComposerCollapseCheck();
       }}
-      onDragEnter={onComposerDragEnter}
-      onDragOver={onComposerDragOver}
-      onDragLeave={onComposerDragLeave}
-      onDrop={onComposerDrop}
       onDragEnterCapture={composerMentionDragHandlers.onDragEnter}
       onDragOverCapture={composerMentionDragHandlers.onDragOver}
       onDragLeaveCapture={onComposerMentionDragLeaveCapture}
