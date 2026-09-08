@@ -8,7 +8,7 @@ import { Argument, Command } from "effect/unstable/cli";
 
 import { launchDesktopApp } from "./desktopLaunch.ts";
 
-export class DesktopOpenWorkspacePathError extends Schema.TaggedErrorClass<DesktopOpenWorkspacePathError>()(
+export class DesktopOpenWorkspacePathError extends Schema.TaggedError<DesktopOpenWorkspacePathError>()(
   "DesktopOpenWorkspacePathError",
   {
     path: Schema.String,

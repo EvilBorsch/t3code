@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-export class DesktopAppNotFoundError extends Schema.TaggedErrorClass<DesktopAppNotFoundError>()(
+export class DesktopAppNotFoundError extends Schema.TaggedError<DesktopAppNotFoundError>()(
   "DesktopAppNotFoundError",
   {
     searchedPaths: Schema.Array(Schema.String),
@@ -31,7 +31,7 @@ export class DesktopAppNotFoundError extends Schema.TaggedErrorClass<DesktopAppN
   }
 }
 
-export class DesktopAppLaunchError extends Schema.TaggedErrorClass<DesktopAppLaunchError>()(
+export class DesktopAppLaunchError extends Schema.TaggedError<DesktopAppLaunchError>()(
   "DesktopAppLaunchError",
   {
     binaryPath: Schema.String,

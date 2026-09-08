@@ -20,7 +20,7 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
-export class DesktopOpenWorkspacePathError extends Schema.TaggedErrorClass<DesktopOpenWorkspacePathError>()(
+export class DesktopOpenWorkspacePathError extends Schema.TaggedError<DesktopOpenWorkspacePathError>()(
   "DesktopOpenWorkspacePathError",
   {
     path: Schema.String,
