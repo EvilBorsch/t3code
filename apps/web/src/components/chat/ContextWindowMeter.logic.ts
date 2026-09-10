@@ -122,16 +122,10 @@ export function formatContextWindowCompactionMessage(
  * provider (catalog still loading, or the thread's provider disabled) reserves.
  */
 export function shouldReserveContextWindowMeter(input: {
-  readonly meterEnabled: boolean;
   readonly detailLoading: boolean;
   readonly threadStarted: boolean;
   /** `null` while the thread's provider is not in the catalog. */
   readonly providerReportsContextWindow: boolean | null;
 }): boolean {
-  return (
-    input.meterEnabled &&
-    input.detailLoading &&
-    input.threadStarted &&
-    input.providerReportsContextWindow !== false
-  );
+  return input.detailLoading && input.threadStarted && input.providerReportsContextWindow !== false;
 }

@@ -359,6 +359,10 @@ Verified smoke (post-`6db2e51e9` Nightly install):
 >   "Usage limits" section in the editor using upstream's `LimitWindows` bars.
 > - Clock is the shared minute tick (`useNowMinute`), never a per-component timer.
 > - Mobile keeps upstream's on-demand panel only.
+> - **Context window ring is always on.** Upstream #9190 made `ContextWindowMeter` opt-in
+>   (`contextWindowMeterEnabled`, default `false`, a "legacy" toggle), which hid it for this
+>   user. The fork renders it whenever a snapshot exists and drops the toggle from Settings and
+>   settings search; the contract field stays so stored client settings still decode.
 
 ### Problem
 

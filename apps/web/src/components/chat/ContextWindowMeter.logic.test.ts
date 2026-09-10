@@ -240,7 +240,6 @@ describe("hasDismissedResumeCompaction", () => {
 
 describe("shouldReserveContextWindowMeter", () => {
   const loadingStartedThread = {
-    meterEnabled: true,
     detailLoading: true,
     threadStarted: true,
     providerReportsContextWindow: true,
@@ -278,11 +277,5 @@ describe("shouldReserveContextWindowMeter", () => {
         providerReportsContextWindow: false,
       }),
     ).toBe(false);
-  });
-
-  it("reserves nothing while the meter is switched off", () => {
-    expect(shouldReserveContextWindowMeter({ ...loadingStartedThread, meterEnabled: false })).toBe(
-      false,
-    );
   });
 });
