@@ -25,7 +25,9 @@ export class NodePtyModuleLoadError extends Schema.TaggedError<NodePtyModuleLoad
 type NodePtyModuleLoader = () => Promise<typeof import("node-pty")>;
 type NodePtyPackageJsonResolver = () => string;
 
-let didEnsureSpawnHelperExecutable = false;
+// Ключ — путь helper'а, а не один флаг на процесс: адаптеры с разными
+// резолверами (например, в тестах) должны chmod'ить каждый свой helper.
+const ensuredSpawnHelperPaths = new Set<string>();
 
 const defaultNodePtyPackageJsonResolver: NodePtyPackageJsonResolver = () =>
   NodeModule.createRequire(import.meta.url).resolve("node-pty/package.json");
@@ -61,11 +63,10 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* (
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;
   if (platform === "win32") return;
-  if (didEnsureSpawnHelperExecutable) return;
 
   const helperPath = yield* resolveNodePtySpawnHelperPath(resolvePackageJson);
-  if (!helperPath) return;
-  didEnsureSpawnHelperExecutable = true;
+  if (!helperPath || ensuredSpawnHelperPaths.has(helperPath)) return;
+  ensuredSpawnHelperPaths.add(helperPath);
 
   if (!(yield* fs.exists(helperPath))) {
     return;
