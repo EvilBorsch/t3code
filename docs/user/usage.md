@@ -56,6 +56,8 @@ Filter with the environment dropdown to see what a single machine has.
 
 If a window looks stale, refresh Limits to re-check every provider and hub.
 
+The composer shows one ring per limit window next to the send button for the selected provider: the filled share is what you have spent, and it turns amber above 75% and red above 90%. Hover a ring to see every window with the percent used and left, when it resets, and whether you are ahead of pace. The same numbers sit on each provider's row under **Settings → Providers**.
+
 Pick `/usage-limits` from the composer's command menu, or send it as a message, to check the
 current model's limits without leaving the conversation. The result opens above the composer and
 closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh

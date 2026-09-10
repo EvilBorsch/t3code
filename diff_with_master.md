@@ -338,10 +338,27 @@ Verified smoke (post-`6db2e51e9` Nightly install):
 
 ---
 
-## Theme D — Account usage limits (retired 2026-09-06)
+## Theme D — Account usage limits (data retired 2026-09-06, UI re-added 2026-09-10)
 
-> **Retired.** Upstream #9507 ships the same feature with a Limits tab; see _Merge 2026-09-06_.
-> The notes below describe the fork's implementation as it was, for archaeology only.
+> **Data side retired.** Upstream #9507 ships the probe, `ProviderUsageLimitsIngestion` and
+> `ServerProvider.usageLimits`; see _Merge 2026-09-06_. The notes below describe the fork's
+> original data path for archaeology only.
+>
+> **UI side re-added 2026-09-10.** Upstream only shows limits on demand (`/usage-limits`
+> banner, Usage → Limits), which lost the always-visible meter the fork was built for. It is
+> back, reading upstream's `provider.usageLimits`:
+>
+> - `apps/web/src/components/chat/ProviderUsageMeter.tsx` — one ring per window beside the
+>   composer send button (session `5h`, weekly `7d`, model-scoped weekly by model initial,
+>   monthly `30d`); fill is spent share, colour goes success → warning at 75% → error above 90%.
+>   Hover shows every window with `% used · % left`, the reset countdown and absolute time,
+>   pace, and banked Codex reset credits.
+> - `ProviderUsageMeter.logic.ts` (+ test) — window ordering, badges, expiry: a window whose
+>   reset has passed renders 0% with "waiting for fresh data" rather than a stale figure.
+> - `settings/ProviderInstanceCard.tsx` — the same rings inline on each provider row, and a
+>   "Usage limits" section in the editor using upstream's `LimitWindows` bars.
+> - Clock is the shared minute tick (`useNowMinute`), never a per-component timer.
+> - Mobile keeps upstream's on-demand panel only.
 
 ### Problem
 

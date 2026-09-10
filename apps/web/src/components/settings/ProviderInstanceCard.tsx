@@ -33,7 +33,12 @@ import {
 } from "@t3tools/shared/model";
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { normalizeProviderAccentColor } from "../../providerInstances";
+import { limitsNotice } from "@t3tools/shared/usageLimits";
+import { UsageRing } from "../chat/ProviderUsageMeter";
+import { formatUsageReset, presentUsageWindows } from "../chat/ProviderUsageMeter.logic";
+import { LimitWindows, resetCreditsSummary } from "../usage/UsageLimits";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
@@ -167,6 +172,56 @@ function ProviderAuthEmail(props: { readonly email: string | undefined }) {
       hideTooltip="Click to hide email"
       className="max-w-full truncate"
     />
+  );
+}
+
+// Строка лимитов аккаунта в списке провайдеров: кольцо и цифры по каждому окну.
+function ProviderUsageSummary({ provider }: { readonly provider: ServerProvider | undefined }) {
+  const nowMs = Date.parse(`${useNowMinute()}:00.000Z`);
+  const windows = presentUsageWindows(provider?.usageLimits, nowMs);
+  if (windows.length === 0) return null;
+  return (
+    <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+      {windows.map((window) => (
+        <span key={window.id} className="inline-flex min-w-0 items-center gap-1.5">
+          <UsageRing window={window} showBadge={false} className="size-3.5" />
+          <span className="truncate">
+            {window.title}
+            <span className="mx-1">·</span>
+            <span className="font-medium text-foreground tabular-nums">
+              {window.usedPercent}% used
+            </span>
+            <span className="mx-1">·</span>
+            {formatUsageReset(window, nowMs).replace(/^Resets in /, "resets in ")}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+// Секция лимитов в редакторе провайдера: полные полосы upstream-компонента
+// или причина, по которой лимитов нет.
+function ProviderUsageLimitsSection({ provider }: { readonly provider: ServerProvider }) {
+  const limits = provider.usageLimits;
+  const nowMs = Date.parse(`${useNowMinute()}:00.000Z`);
+  if (!limits) return null;
+  const notice = limitsNotice(limits);
+  return (
+    <SettingsSection title="Usage limits">
+      <div className="flex flex-col gap-2 px-3 py-3 sm:px-4">
+        {notice ? (
+          <span className="text-xs text-muted-foreground">{notice}</span>
+        ) : (
+          <LimitWindows driver={provider.driver} windows={limits.windows} now={nowMs} />
+        )}
+        {limits.resetCredits && limits.resetCredits.availableCount > 0 ? (
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {resetCreditsSummary(limits.resetCredits, nowMs)}
+          </span>
+        ) : null}
+      </div>
+    </SettingsSection>
   );
 }
 
@@ -663,6 +718,7 @@ export function ProviderInstanceCard({
                 {needsAttention && summary.detail ? ` · ${summary.detail}` : null}
               </span>
             </span>
+            {enabled ? <ProviderUsageSummary provider={liveProvider} /> : null}
           </span>
         </div>
         <span className="flex h-5 shrink-0 items-center">
@@ -842,6 +898,8 @@ export function ProviderInstanceCard({
           <div className="px-3 py-3 sm:px-4">{setup}</div>
         </SettingsSection>
       ) : null}
+
+      {enabled && liveProvider ? <ProviderUsageLimitsSection provider={liveProvider} /> : null}
 
       <SettingsSection
         title="Runtime"
