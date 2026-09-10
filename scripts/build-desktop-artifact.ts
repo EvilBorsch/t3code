@@ -2731,6 +2731,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           }
         : {}),
     };
+    if (!signed) {
+      buildConfig.afterSign = path.join(repoRoot, "scripts/sign-macos-local.ts");
+    }
   }
 
   if (platform === "mac" && target === "dmg") {
