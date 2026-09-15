@@ -18,7 +18,8 @@ What the fork still carries on top of upstream:
 
 - **Always-visible usage limits** — rings next to the composer send button for the selected provider (session, weekly, model-scoped weekly), each hover showing spent and remaining percent with the reset time; the same numbers appear on every provider row and as a section in the provider editor. The context window ring next to them is always on; upstream's "legacy" opt-in toggle is gone. Web and desktop only.
 - **`t3 .` / `t3 open`** — open a directory in the installed desktop app as a new draft thread, with a pending-intent file so warm starts on macOS work too.
-- **Sidebar follows the open thread** — jumping to a thread from search or the command palette scrolls the sidebar to its row.
+- **Sidebar follows search results** — selecting a project expands its thread list; selecting a thread scrolls to its row, including rows loaded after navigation and repeated selections.
+- **Providers refresh when opening a chat** — new and existing chats refresh provider availability and models once per visit, so recovered providers become selectable without a trip to Settings.
 - **OS file drops as mentions** — a file dropped from the desktop onto the composer becomes an absolute-path `@` mention when the app can resolve its path; images and everything else become attachments.
 - **Claude probe from a neutral directory** — the capability probe never runs in the server's working directory, which on desktop is `$HOME` and takes close to a minute to scan.
 - **Warm thread cache healing** — a cached thread that lost its user prompt is discarded and reloaded instead of rendering a one-sided conversation.

@@ -23,6 +23,7 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -258,7 +259,10 @@ it.effect.each([
         const { accessibilityTree: _tree, ...boundedMetadata } = metadata;
         expect(snapshot.isError).toBe(false);
         expect(snapshot.structuredContent).toEqual(metadata);
-        const [text, ...rest] = snapshot.content;
+        const [identity, text, ...rest] = snapshot.content;
+        expect(identity?.type === "text" ? decodeJsonText(identity.text) : null).toEqual({
+          url: page.url,
+        });
         expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual(boundedMetadata);
         expect(rest).toEqual([
           {
@@ -287,7 +291,12 @@ it.effect.each([
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
-      expect(nextDefault.content.map((content) => content.type)).toEqual(["text", "text", "image"]);
+      expect(nextDefault.content.map((content) => content.type)).toEqual([
+        "text",
+        "text",
+        "text",
+        "image",
+      ]);
       expect(nextDefault.structuredContent).toEqual({ ...page, title: "Snapshot 7", screenshot });
       expect(requests).toBe(7);
     }),
@@ -337,7 +346,7 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
         /^browser-screenshot-example-test-[0-9a-z]+-[0-9a-f]{8}\.png$/,
       );
       expect(Buffer.from(yield* fileSystem.readFile(screenshotPath!)).toString()).toBe("png");
-      const text = snapshot.content.find((content) => content.type === "text");
+      const [, text] = snapshot.content;
       expect(text?.type === "text" ? text.text : "").toContain(screenshotPath);
 
       const unsaved = yield* callSnapshot({});
@@ -437,7 +446,10 @@ it.effect("keeps the snapshot text under the agent's output ceiling", () =>
       const snapshot = yield* callSnapshot({ includeImage: false });
 
       expect(snapshot.isError).toBe(false);
-      const [text, notice] = snapshot.content;
+      const [identity, text, notice] = snapshot.content;
+      expect(identity?.type === "text" ? decodeJsonText(identity.text) : null).toEqual({
+        url: oversized.url,
+      });
       expect(text?.type).toBe("text");
       const body = text?.type === "text" ? text.text : "";
       expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
@@ -479,7 +491,7 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
 
       const snapshot = yield* callSnapshot({ includeImage: false });
 
-      const [text] = snapshot.content;
+      const [, text] = snapshot.content;
       const body = text?.type === "text" ? text.text : "";
       expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
         McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
@@ -490,7 +502,7 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
       };
       expect(parsed.title.length).toBe(2_049);
       expect(parsed.consoleEntries[0]?.text.length).toBe(501);
-      const notice = snapshot.content[1];
+      const notice = snapshot.content[2];
       const noticeText = notice?.type === "text" ? notice.text : "";
       expect(noticeText).toContain("url or title after 2048 characters");
       expect(noticeText).toContain("console entries text after 500 characters");
@@ -541,7 +553,7 @@ it.effect("sheds log entries before locators when every list is full", () =>
 
       const snapshot = yield* callSnapshot({ includeImage: false });
 
-      const [text, notice] = snapshot.content;
+      const [, text, notice] = snapshot.content;
       const body = text?.type === "text" ? text.text : "";
       expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
         McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
@@ -618,19 +630,36 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect.each([false, true])(
-  "isolates HTTP tools/list by credential when the first session has preview=%s",
-  (firstPreview) =>
+it.effect.each([0, 1, 2, 3])(
+  "isolates HTTP tool catalogs and calls with capability combination %s initialized first",
+  (firstCombination) =>
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* McpSessionRegistry.__testing.make();
+        const queriedThreads: Array<ThreadId> = [];
         const serverLayer = McpHttpServer.layer.pipe(
           Layer.provide(Layer.succeed(McpSessionRegistry.McpSessionRegistry, registry)),
           Layer.provide(PreviewAutomationBroker.layer),
           Layer.provide(
+            Layer.mock(DeviceService.DeviceService)({
+              list: Effect.succeed({
+                hosts: [],
+                hostStatus: "ready",
+                hostStatuses: {},
+                devices: [],
+                sessions: [],
+                onboardingCompleted: true,
+                agentAccessEnabled: true,
+                hubBasePath: "/api/device-hub",
+                revision: 1,
+              }),
+            }),
+          ),
+          Layer.provide(
             Layer.mock(ProjectionSnapshotQuery)({
-              getThreadShellById: (id) =>
-                Effect.succeedSome({
+              getThreadShellById: (id) => {
+                queriedThreads.push(id);
+                return Effect.succeedSome({
                   id,
                   projectId: ProjectId.make("project-mcp-test"),
                   title: "MCP test",
@@ -654,7 +683,8 @@ it.effect.each([false, true])(
                   hasPendingApprovals: false,
                   hasPendingUserInput: false,
                   hasActionableProposedPlan: false,
-                }),
+                });
+              },
             }),
           ),
           Layer.provide(Layer.mock(OrchestrationEngineService)({})),
@@ -664,12 +694,30 @@ it.effect.each([false, true])(
           disableLogger: true,
         }).pipe(Layer.build);
         const httpClient = yield* HttpClient.HttpClient;
-        const sessions: Array<{ preview: boolean; headers: Record<string, string> }> = [];
-        for (const preview of [firstPreview, !firstPreview]) {
+        const sessions: Array<{
+          preview: boolean;
+          device: boolean;
+          threadId: ThreadId;
+          headers: Record<string, string>;
+        }> = [];
+        const combinations = [
+          { preview: false, device: false },
+          { preview: true, device: false },
+          { preview: false, device: true },
+          { preview: true, device: true },
+        ];
+        for (const { preview, device } of [
+          ...combinations.slice(firstCombination),
+          ...combinations.slice(0, firstCombination),
+        ]) {
+          const sessionThreadId = ThreadId.make(`thread-preview-${preview}-device-${device}`);
+          const capabilities = new Set<McpInvocationContext.McpCapability>(["pull-requests"]);
+          if (preview) capabilities.add("preview");
+          if (device) capabilities.add("device");
           const credential = yield* registry.issue({
-            threadId: ThreadId.make(`thread-preview-${preview}`),
+            threadId: sessionThreadId,
             providerInstanceId: ProviderInstanceId.make("opencode"),
-            preview,
+            capabilities,
           });
           const headers = {
             authorization: credential.config.authorizationHeader,
@@ -696,7 +744,7 @@ it.effect.each([false, true])(
             ),
           });
           expect(notified.status).toBe(202);
-          sessions.push({ preview, headers: sessionHeaders });
+          sessions.push({ preview, device, threadId: sessionThreadId, headers: sessionHeaders });
         }
 
         const listTools = Effect.fn("test.listTools")(function* (
@@ -718,11 +766,14 @@ it.effect.each([false, true])(
           });
           const { result } = body as { result: { tools: Array<{ name: string }> } };
           const names = result.tools.map((tool) => tool.name).sort();
-          expect(names.filter((name) => !name.startsWith("preview_"))).toEqual([
-            "link_pull_request",
-            "list_thread_pull_requests",
-            "unlink_pull_request",
-          ]);
+          expect(
+            names.filter((name) => !name.startsWith("preview_") && !name.startsWith("device_")),
+          ).toEqual(["link_pull_request", "list_thread_pull_requests", "unlink_pull_request"]);
+          expect(names.filter((name) => name.startsWith("device_"))).toEqual(
+            session.device
+              ? ["device_close", "device_list", "device_open", "device_screenshot"]
+              : [],
+          );
           expect(names.filter((name) => name.startsWith("preview_"))).toEqual(
             session.preview
               ? [
@@ -760,18 +811,38 @@ it.effect.each([false, true])(
             id: 3,
             result: { isError: false, structuredContent: { pullRequests: [], chains: [] } },
           });
-          if (!session.preview) {
-            for (const name of ["preview_open", "preview_snapshot"]) {
-              const denied = yield* httpClient.post("/mcp", {
-                headers: session.headers,
-                body: HttpBody.text(
-                  `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"${name}","arguments":{}}}`,
-                  "application/json",
-                ),
-              });
-              expect(denied.status).toBe(200);
-              expect(yield* denied.json).toMatchObject({ id: 4, error: { code: -32602 } });
-            }
+          expect(queriedThreads.at(-1)).toBe(session.threadId);
+          if (session.device) {
+            const devices = yield* httpClient.post("/mcp", {
+              headers: session.headers,
+              body: HttpBody.text(
+                '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"device_list","arguments":{}}}',
+                "application/json",
+              ),
+            });
+            expect(devices.status).toBe(200);
+            expect(yield* devices.json).toMatchObject({
+              id: 5,
+              result: {
+                isError: false,
+                structuredContent: { hosts: [], hostStatuses: {}, devices: [], open: [] },
+              },
+            });
+          }
+          const deniedTools = [
+            ...(session.preview ? [] : ["preview_open", "preview_snapshot"]),
+            ...(session.device ? [] : ["device_list", "device_screenshot"]),
+          ];
+          for (const name of deniedTools) {
+            const denied = yield* httpClient.post("/mcp", {
+              headers: session.headers,
+              body: HttpBody.text(
+                `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"${name}","arguments":{}}}`,
+                "application/json",
+              ),
+            });
+            expect(denied.status).toBe(200);
+            expect(yield* denied.json).toMatchObject({ id: 4, error: { code: -32602 } });
           }
           const terminated = yield* httpClient.del("/mcp", { headers: session.headers });
           expect(terminated.status).toBe(204);
@@ -797,6 +868,10 @@ it.effect("registers annotated tools and preserves authenticated request context
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
       const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const toolIcon = {
+        _tag: "website" as const,
+        pageUrl: "http://example.test/",
+      };
       const routedRequests: Array<{
         readonly operation: string;
         readonly tabId?: string | undefined;
@@ -846,7 +921,7 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(clickTool?.tool.annotations?.readOnlyHint).toBe(false);
       expect(clickTool?.tool.annotations?.destructiveHint).toBe(true);
       expect(clickTool?.tool.annotations?.openWorldHint).toBe(true);
-      expect(clickTool?.tool.outputSchema).toEqual({
+      expect(clickTool?.tool.outputSchema).toMatchObject({
         type: "object",
         additionalProperties: false,
         description: "The preview action completed successfully.",
@@ -903,10 +978,12 @@ it.effect("registers annotated tools and preserves authenticated request context
           Effect.provideService(McpSchema.McpServerClient, client),
         );
       expect(evaluated.isError).toBe(false);
-      expect(evaluated.structuredContent).toEqual({ value: ["Connect", "Continue"] });
-      expect(evaluated.content).toEqual([
-        { type: "text", text: '{"value":["Connect","Continue"]}' },
-      ]);
+      expect(evaluated.structuredContent).toEqual({ value: ["Connect", "Continue"], toolIcon });
+      const evaluatedText = evaluated.content[0];
+      expect(evaluatedText?.type === "text" ? decodeJsonText(evaluatedText.text) : null).toEqual({
+        toolIcon,
+        value: ["Connect", "Continue"],
+      });
 
       const actionRequests = [
         { name: "preview_click", arguments: { x: 10, y: 10 } },
@@ -923,8 +1000,10 @@ it.effect("registers annotated tools and preserves authenticated request context
             Effect.provideService(McpSchema.McpServerClient, client),
           );
         expect(result.isError).toBe(false);
-        expect(result.structuredContent).toEqual({});
-        expect(result.content).toEqual([{ type: "text", text: "{}" }]);
+        expect(result.structuredContent).toEqual({ toolIcon });
+        expect(routedRequests.at(-1)?.operation).toBe("status");
+        const text = result.content[0];
+        expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual({ toolIcon });
       }
     }),
   ).pipe(Effect.provide(TestLayer)),

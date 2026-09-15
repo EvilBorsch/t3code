@@ -10,6 +10,10 @@ import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/c
 import type { AsyncResult } from "effect/unstable/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 import {
+  effectiveSnoozed,
+  type ThreadSnoozeShell,
+} from "@t3tools/client-runtime/state/thread-settled";
+import {
   getThreadSortTimestamp,
   resolveSettledThreadTimestamp,
   sortThreads,
@@ -20,6 +24,22 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
+
+export function shouldNavigateAfterThreadPark(input: {
+  readonly threadKey: string;
+  readonly currentThreadKey: string | null;
+  readonly action: "settle" | "snooze";
+  readonly now: string;
+  readonly thread: (ThreadSnoozeShell & Pick<SidebarThreadSummary, "settledOverride">) | null;
+}): boolean {
+  return (
+    input.threadKey === input.currentThreadKey &&
+    input.thread !== null &&
+    (input.action === "settle"
+      ? input.thread.settledOverride === "settled"
+      : effectiveSnoozed(input.thread, { now: input.now }))
+  );
+}
 
 const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
@@ -611,18 +631,71 @@ export function useThreadJumpHintVisibility(): {
   };
 }
 
-/**
- * Scrolls the open thread's sidebar row into view whenever the route lands on a
- * different thread. Search and the command palette can jump anywhere in the
- * list, and without this the highlighted row stays wherever the sidebar happened
- * to be scrolled, leaving it to be hunted for by hand.
- */
+const SIDEBAR_THREAD_REVEAL_EVENT = "t3code:reveal-sidebar-thread";
+
+export function requestSidebarThreadReveal(threadKey: string): void {
+  window.dispatchEvent(new CustomEvent(SIDEBAR_THREAD_REVEAL_EVENT, { detail: threadKey }));
+}
+
 export function useRevealActiveThreadRow(threadKey: string | null): void {
   React.useEffect(() => {
-    if (threadKey === null) return;
-    document
-      .querySelector(`[data-thread-item][data-thread-key="${threadKey}"]`)
-      ?.scrollIntoView({ block: "nearest" });
+    let cancelReveal: (() => void) | undefined;
+    const reveal = (targetKey: string) => {
+      cancelReveal?.();
+      const content = document.querySelector<HTMLElement>('[data-slot="sidebar-content"]');
+      const viewport = content?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+      if (!content || !viewport) return;
+      let frame: number | null = null;
+      const cancel = () => {
+        observer.disconnect();
+        if (frame !== null) cancelAnimationFrame(frame);
+        frame = null;
+        viewport.removeEventListener("wheel", cancel);
+        viewport.removeEventListener("pointerdown", cancel);
+        viewport.removeEventListener("touchstart", cancel);
+      };
+      const schedule = () => {
+        if (frame !== null) return;
+        frame = requestAnimationFrame(() => {
+          frame = null;
+          const row = content.querySelector<HTMLElement>(
+            `[data-thread-item][data-thread-key="${CSS.escape(targetKey)}"]`,
+          );
+          if (!row || viewport.clientHeight === 0) return;
+          const rowBounds = row.getBoundingClientRect();
+          if (rowBounds.bottom <= rowBounds.top) return;
+          const viewportBounds = viewport.getBoundingClientRect();
+          // Прокручиваем только панель, после появления строки и закрытия поиска.
+          if (
+            rowBounds.top < viewportBounds.top ||
+            rowBounds.bottom - rowBounds.top > viewport.clientHeight
+          ) {
+            viewport.scrollTop += rowBounds.top - viewportBounds.top;
+          } else if (rowBounds.bottom > viewportBounds.bottom) {
+            viewport.scrollTop += rowBounds.bottom - viewportBounds.bottom;
+          }
+          cancel();
+        });
+      };
+      // Список проекта может загрузиться отдельным коммитом уже после смены маршрута.
+      const observer = new MutationObserver(schedule);
+      observer.observe(content, { childList: true, subtree: true, attributes: true });
+      viewport.addEventListener("wheel", cancel, { passive: true });
+      viewport.addEventListener("pointerdown", cancel, { passive: true });
+      viewport.addEventListener("touchstart", cancel, { passive: true });
+      cancelReveal = cancel;
+      schedule();
+    };
+    const handleRequest = (event: Event) => {
+      const targetKey = (event as CustomEvent<string>).detail;
+      if (targetKey === threadKey) reveal(targetKey);
+    };
+    window.addEventListener(SIDEBAR_THREAD_REVEAL_EVENT, handleRequest);
+    if (threadKey !== null) reveal(threadKey);
+    return () => {
+      cancelReveal?.();
+      window.removeEventListener(SIDEBAR_THREAD_REVEAL_EVENT, handleRequest);
+    };
   }, [threadKey]);
 }
 
@@ -818,9 +891,9 @@ export function shouldRecedeSidebarThread(input: {
   isActive: boolean;
   isSelected: boolean;
 }): boolean {
-  if (input.isActive || input.isSelected) return false;
+  if (input.isActive || input.isSelected || input.status === "input") return false;
   if (input.status === "working" || input.status === "monitoring") return true;
-  if (input.status === "ready" || input.status === "approval" || input.status === "input") {
+  if (input.status === "ready" || input.status === "approval") {
     return !input.isUnread && !input.isWoke;
   }
   return false;
@@ -909,16 +982,12 @@ export function searchSidebarThreads<
 
 export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {
   items: readonly TItem[];
-  activeScopeKey: string | null;
   query: string;
   matches: (item: TItem, query: string) => boolean;
 }): readonly TItem[] {
-  const projectItems = input.items.filter((item) => item.value !== "all");
   const query = input.query.trim();
-  if (query.length > 0) {
-    return projectItems.filter((item) => input.matches(item, query));
-  }
-  return input.activeScopeKey === null ? projectItems : input.items;
+  if (query.length === 0) return input.items;
+  return input.items.filter((item) => item.value !== "all" && input.matches(item, query));
 }
 
 export interface SidebarProjectScopeMenuState {

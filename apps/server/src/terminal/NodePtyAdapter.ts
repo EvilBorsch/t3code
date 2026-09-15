@@ -1,5 +1,6 @@
 import * as NodeModule from "node:module";
 
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -31,6 +32,21 @@ const ensuredSpawnHelperPaths = new Set<string>();
 
 const defaultNodePtyPackageJsonResolver: NodePtyPackageJsonResolver = () =>
   NodeModule.createRequire(import.meta.url).resolve("node-pty/package.json");
+
+// node-pty stays external to the CLI bundle because it dlopens a native
+// addon. Inside a Node single-executable, `import()` cannot load files from
+// disk (only built-ins resolve), while `require` always reads the real
+// filesystem, so both the module and its spawn-helper resolve through it.
+const requireForNodePty = NodeModule.createRequire(import.meta.url);
+
+const loadNodePty: NodePtyModuleLoader = () =>
+  Promise.resolve().then(() => requireForNodePty("node-pty") as typeof import("node-pty"));
+
+/** Injectable so tests can substitute a fake module; `require` bypasses module mocks. */
+export const NodePtyModuleLoaderRef = Context.Reference<NodePtyModuleLoader>(
+  "server/terminal/NodePtyModuleLoader",
+  { defaultValue: () => loadNodePty },
+);
 
 const resolveNodePtySpawnHelperPath = (resolvePackageJson: NodePtyPackageJsonResolver) =>
   Effect.gen(function* () {
@@ -123,16 +139,17 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
 }
 
 export const make = Effect.fn("NodePtyAdapter.make")(function* (
-  loadNodePtyModule: NodePtyModuleLoader = () => import("node-pty"),
+  loadNodePtyModule?: NodePtyModuleLoader,
   resolvePackageJson: NodePtyPackageJsonResolver = defaultNodePtyPackageJsonResolver,
 ) {
+  const moduleLoader = loadNodePtyModule ?? (yield* NodePtyModuleLoaderRef);
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
 
   const nodePty = yield* Effect.tryPromise({
-    try: loadNodePtyModule,
+    try: moduleLoader,
     catch: (cause) =>
       new NodePtyModuleLoadError({
         platform,
