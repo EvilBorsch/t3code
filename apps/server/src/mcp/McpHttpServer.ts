@@ -448,9 +448,26 @@ const McpTransportLive = McpServer.layerHttp({
   version: packageJson.version,
   path: "/mcp",
   protocols: [McpProtocol.v2025_06_18],
-}).pipe(Layer.provide(McpAuthMiddlewareLive));
+});
 
-export const layer = Layer.mergeAll(
-  PreviewToolkitRegistrationLive,
-  PullRequestsToolkitRegistrationLive,
-).pipe(Layer.provideMerge(McpTransportLive));
+export const layer = Layer.unwrap(
+  Effect.gen(function* () {
+    // Каталоги и транспортные сессии изолированы: права берутся из credential каждого запроса.
+    const pullRequestsOnly = yield* HttpRouter.toHttpEffect(
+      PullRequestsToolkitRegistrationLive.pipe(Layer.provide(McpTransportLive)),
+    ).pipe(Effect.provideService(Layer.CurrentMemoMap, yield* Layer.makeMemoMap));
+    const withPreview = yield* HttpRouter.toHttpEffect(
+      Layer.mergeAll(PreviewToolkitRegistrationLive, PullRequestsToolkitRegistrationLive).pipe(
+        Layer.provide(McpTransportLive),
+      ),
+    ).pipe(Effect.provideService(Layer.CurrentMemoMap, yield* Layer.makeMemoMap));
+    return HttpRouter.add(
+      "*",
+      "/mcp",
+      Effect.gen(function* () {
+        const invocation = yield* McpInvocationContext.McpInvocationContext;
+        return yield* invocation.capabilities.has("preview") ? withPreview : pullRequestsOnly;
+      }),
+    ).pipe(Layer.provide(McpAuthMiddlewareLive));
+  }),
+);

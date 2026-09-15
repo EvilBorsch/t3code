@@ -1,7 +1,13 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PreviewTabId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,9 +21,11 @@ import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/uns
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
@@ -608,6 +616,180 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
       expect(reusedSessionResponse.status).toBe(404);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect.each([false, true])(
+  "isolates HTTP tools/list by credential when the first session has preview=%s",
+  (firstPreview) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* McpSessionRegistry.__testing.make();
+        const serverLayer = McpHttpServer.layer.pipe(
+          Layer.provide(Layer.succeed(McpSessionRegistry.McpSessionRegistry, registry)),
+          Layer.provide(PreviewAutomationBroker.layer),
+          Layer.provide(
+            Layer.mock(ProjectionSnapshotQuery)({
+              getThreadShellById: (id) =>
+                Effect.succeedSome({
+                  id,
+                  projectId: ProjectId.make("project-mcp-test"),
+                  title: "MCP test",
+                  modelSelection: {
+                    instanceId: ProviderInstanceId.make("opencode"),
+                    model: "test",
+                  },
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  branch: null,
+                  worktreePath: null,
+                  pullRequests: [],
+                  latestTurn: null,
+                  createdAt: "2026-09-14T00:00:00.000Z",
+                  updatedAt: "2026-09-14T00:00:00.000Z",
+                  archivedAt: null,
+                  settledOverride: null,
+                  settledAt: null,
+                  session: null,
+                  latestUserMessageAt: null,
+                  hasPendingApprovals: false,
+                  hasPendingUserInput: false,
+                  hasActionableProposedPlan: false,
+                }),
+            }),
+          ),
+          Layer.provide(Layer.mock(OrchestrationEngineService)({})),
+        );
+        yield* HttpRouter.serve(serverLayer, {
+          disableListenLog: true,
+          disableLogger: true,
+        }).pipe(Layer.build);
+        const httpClient = yield* HttpClient.HttpClient;
+        const sessions: Array<{ preview: boolean; headers: Record<string, string> }> = [];
+        for (const preview of [firstPreview, !firstPreview]) {
+          const credential = yield* registry.issue({
+            threadId: ThreadId.make(`thread-preview-${preview}`),
+            providerInstanceId: ProviderInstanceId.make("opencode"),
+            preview,
+          });
+          const headers = {
+            authorization: credential.config.authorizationHeader,
+            accept: "application/json, text/event-stream",
+            "mcp-protocol-version": "2025-06-18",
+          };
+          const initialized = yield* httpClient.post("/mcp", {
+            headers,
+            body: HttpBody.text(
+              '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"opencode","version":"1.0.0"}}}',
+              "application/json",
+            ),
+          });
+          expect(initialized.status).toBe(200);
+          yield* initialized.json;
+          const sessionId = initialized.headers["mcp-session-id"];
+          expect(sessionId).toBeTypeOf("string");
+          const sessionHeaders = { ...headers, "mcp-session-id": sessionId! };
+          const notified = yield* httpClient.post("/mcp", {
+            headers: sessionHeaders,
+            body: HttpBody.text(
+              '{"jsonrpc":"2.0","method":"notifications/initialized"}',
+              "application/json",
+            ),
+          });
+          expect(notified.status).toBe(202);
+          sessions.push({ preview, headers: sessionHeaders });
+        }
+
+        const listTools = Effect.fn("test.listTools")(function* (
+          session: (typeof sessions)[number],
+        ) {
+          const response = yield* httpClient.post("/mcp", {
+            headers: session.headers,
+            body: HttpBody.text(
+              '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}',
+              "application/json",
+            ),
+          });
+          expect(response.status).toBe(200);
+          const body = yield* response.json;
+          expect(body).toMatchObject({
+            jsonrpc: "2.0",
+            id: 2,
+            result: { tools: expect.any(Array) },
+          });
+          const { result } = body as { result: { tools: Array<{ name: string }> } };
+          const names = result.tools.map((tool) => tool.name).sort();
+          expect(names.filter((name) => !name.startsWith("preview_"))).toEqual([
+            "link_pull_request",
+            "list_thread_pull_requests",
+            "unlink_pull_request",
+          ]);
+          expect(names.filter((name) => name.startsWith("preview_"))).toEqual(
+            session.preview
+              ? [
+                  "preview_click",
+                  "preview_evaluate",
+                  "preview_navigate",
+                  "preview_open",
+                  "preview_press",
+                  "preview_recording_start",
+                  "preview_recording_stop",
+                  "preview_resize",
+                  "preview_scroll",
+                  "preview_set_appearance",
+                  "preview_snapshot",
+                  "preview_status",
+                  "preview_type",
+                  "preview_wait_for",
+                ]
+              : [],
+          );
+        });
+        yield* Effect.forEach(sessions, listTools, { concurrency: "unbounded" });
+        yield* Effect.forEach(sessions.toReversed(), listTools, { concurrency: "unbounded" });
+
+        for (const session of sessions) {
+          const pullRequests = yield* httpClient.post("/mcp", {
+            headers: session.headers,
+            body: HttpBody.text(
+              '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_thread_pull_requests","arguments":{}}}',
+              "application/json",
+            ),
+          });
+          expect(pullRequests.status).toBe(200);
+          expect(yield* pullRequests.json).toMatchObject({
+            id: 3,
+            result: { isError: false, structuredContent: { pullRequests: [], chains: [] } },
+          });
+          if (!session.preview) {
+            for (const name of ["preview_open", "preview_snapshot"]) {
+              const denied = yield* httpClient.post("/mcp", {
+                headers: session.headers,
+                body: HttpBody.text(
+                  `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"${name}","arguments":{}}}`,
+                  "application/json",
+                ),
+              });
+              expect(denied.status).toBe(200);
+              expect(yield* denied.json).toMatchObject({ id: 4, error: { code: -32602 } });
+            }
+          }
+          const terminated = yield* httpClient.del("/mcp", { headers: session.headers });
+          expect(terminated.status).toBe(204);
+        }
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ServerEnvironment.ServerEnvironment)({
+            getEnvironmentId: Effect.succeed(environmentId),
+          }),
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-list-test-" }),
+        ).pipe(
+          Layer.provideMerge(NodeHttpServer.layerTest),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
 );
 
 it.effect("registers annotated tools and preserves authenticated request context", () =>
