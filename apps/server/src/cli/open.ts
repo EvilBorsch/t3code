@@ -57,7 +57,7 @@ export const openDesktopWorkspace = Effect.fn("openDesktopWorkspace")(function* 
 });
 
 export const openCommand = Command.make("open", {
-  path: Argument.string("path").pipe(
+  path: Argument.String("path").pipe(
     Argument.withDescription("Workspace directory to open (defaults to the current directory)."),
     Argument.withDefault("."),
   ),

@@ -8,8 +8,9 @@
 > This file describes the **current** delta only. Features upstream has since absorbed are
 > listed once under _Absorbed by upstream_ so nobody re-adds them.
 
-**Sync status 2026-09-10:** merged `origin/main` at `d29c56a5c4`, **0 behind / 35 ahead**
-(27 fork commits + merges). Re-check with:
+**Sync status 2026-09-28:** merged `origin/main` at `d15210cd3d`, **0 behind / 39 ahead**
+(fork commits + merges). Upstream now ships `DesktopBridge.getPathForFile` itself; the fork's
+duplicate was dropped. Re-check with:
 
 ```bash
 git fetch origin main

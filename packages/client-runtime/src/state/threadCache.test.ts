@@ -37,6 +37,7 @@ function makeThread(overrides: Partial<OrchestrationThread> = {}): Orchestration
     proposedPlans: [],
     activities: [],
     checkpoints: [],
+    pullRequests: [],
     session: null,
     ...overrides,
   };
