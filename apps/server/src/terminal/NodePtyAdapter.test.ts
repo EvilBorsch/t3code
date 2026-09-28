@@ -4,7 +4,9 @@ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/ho
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
 import * as NodePtyAdapter from "./NodePtyAdapter.ts";
@@ -19,20 +21,57 @@ const spawn = vi.fn(() => ({
   onExit: vi.fn(() => ({ dispose: vi.fn() })),
 }));
 
-vi.mock("node-pty", () => ({ spawn }));
+const fakeNodePty = { spawn } as unknown as typeof import("node-pty");
 
-const testLayer = NodePtyAdapter.layer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      NodeServices.layer,
-      Layer.succeed(HostProcessPlatform, "win32"),
-      Layer.succeed(HostProcessArchitecture, "x64"),
+const makeTestLayer = (platform: NodeJS.Platform = "win32") =>
+  NodePtyAdapter.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(HostProcessPlatform, platform),
+        Layer.succeed(HostProcessArchitecture, "x64"),
+        Layer.succeed(NodePtyAdapter.NodePtyModuleLoaderRef, () => Promise.resolve(fakeNodePty)),
+      ),
     ),
-  ),
-);
+  );
+
+const testLayer = makeTestLayer();
+
+for (const platform of ["win32", "linux", "darwin"] as const) {
+  it.effect(`terminates through node-pty using ${platform} semantics`, () =>
+    Effect.gen(function* () {
+      const adapter = yield* PtyAdapter.PtyAdapter;
+      const process = yield* adapter.spawn({
+        shell: "test-shell",
+        cwd: ".",
+        cols: 80,
+        rows: 24,
+        env: {},
+      });
+      const nativeProcess = spawn.mock.results.at(-1)!.value;
+      nativeProcess.kill.mockImplementation((signal?: string) => {
+        if (platform === "win32" && signal) {
+          throw new Error("Signals not supported on windows.");
+        }
+      });
+
+      process.kill("SIGTERM");
+      process.kill("SIGKILL");
+      process.kill();
+
+      assert.deepEqual(
+        nativeProcess.kill.mock.calls,
+        platform === "win32"
+          ? [[undefined], [undefined], [undefined]]
+          : [["SIGTERM"], ["SIGKILL"], [undefined]],
+      );
+    }).pipe(Effect.provide(makeTestLayer(platform))),
+  );
+}
 
 it.effect("spawns through the public adapter with the provided host references", () =>
   Effect.gen(function* () {
+    spawn.mockClear();
     const adapter = yield* PtyAdapter.PtyAdapter;
     const process = yield* adapter.spawn({
       shell: "powershell.exe",
@@ -52,8 +91,35 @@ it.effect("spawns through the public adapter with the provided host references",
         cwd: "C:\\workspace",
         cols: 120,
         rows: 40,
-        env: {},
-        name: "xterm-color",
+        env: { TERM: "xterm-256color" },
+        name: "xterm-256color",
+      },
+    ]);
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("preserves a caller-provided TERM in the spawn env on win32", () =>
+  Effect.gen(function* () {
+    spawn.mockClear();
+    const adapter = yield* PtyAdapter.PtyAdapter;
+    yield* adapter.spawn({
+      shell: "powershell.exe",
+      cwd: "C:\\workspace",
+      cols: 80,
+      rows: 24,
+      env: { TERM: "xterm-direct" },
+    });
+
+    assert.equal(spawn.mock.calls.length, 1);
+    assert.deepEqual(spawn.mock.calls[0], [
+      "powershell.exe",
+      [],
+      {
+        cwd: "C:\\workspace",
+        cols: 80,
+        rows: 24,
+        env: { TERM: "xterm-direct" },
+        name: "xterm-256color",
       },
     ]);
   }).pipe(Effect.provide(testLayer)),
@@ -62,7 +128,10 @@ it.effect("spawns through the public adapter with the provided host references",
 it.effect("reports native module load failures as structured startup defects", () =>
   Effect.gen(function* () {
     const cause = new Error("native binding could not be loaded");
-    const exit = yield* NodePtyAdapter.make(() => Promise.reject(cause)).pipe(Effect.exit);
+    const exit = yield* NodePtyAdapter.make().pipe(
+      Effect.provideService(NodePtyAdapter.NodePtyModuleLoaderRef, () => Promise.reject(cause)),
+      Effect.exit,
+    );
 
     assert.isTrue(Exit.isFailure(exit));
     if (Exit.isFailure(exit)) {
@@ -82,6 +151,56 @@ it.effect("reports native module load failures as structured startup defects", (
         NodeServices.layer,
         Layer.succeed(HostProcessPlatform, "win32"),
         Layer.succeed(HostProcessArchitecture, "x64"),
+      ),
+    ),
+  ),
+);
+
+it.effect("makes the unpacked Electron spawn helper executable", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-node-pty-" });
+    const packageJsonPath = path.join(
+      tempDir,
+      "app.asar",
+      "node_modules",
+      "node-pty",
+      "package.json",
+    );
+    const helperPath = path.join(
+      tempDir,
+      "app.asar.unpacked",
+      "node_modules",
+      "node-pty",
+      "build",
+      "Release",
+      "spawn-helper",
+    );
+    yield* fs.makeDirectory(path.dirname(helperPath), { recursive: true });
+    yield* fs.writeFileString(helperPath, "spawn helper");
+    yield* fs.chmod(helperPath, 0o644);
+
+    const adapter = yield* NodePtyAdapter.make(
+      () => import("node-pty"),
+      () => packageJsonPath,
+    );
+    yield* adapter.spawn({
+      shell: "/bin/sh",
+      cwd: tempDir,
+      cols: 80,
+      rows: 24,
+      env: {},
+    });
+
+    const helperInfo = yield* fs.stat(helperPath);
+    assert.equal(helperInfo.mode & 0o777, 0o755);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(HostProcessPlatform, "darwin"),
+        Layer.succeed(HostProcessArchitecture, "arm64"),
       ),
     ),
   ),

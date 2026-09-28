@@ -1,5 +1,6 @@
 import * as NodeModule from "node:module";
 
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -9,7 +10,7 @@ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/ho
 
 import * as PtyAdapter from "./PtyAdapter.ts";
 
-export class NodePtyModuleLoadError extends Schema.TaggedErrorClass<NodePtyModuleLoadError>()(
+export class NodePtyModuleLoadError extends Schema.TaggedError<NodePtyModuleLoadError>()(
   "NodePtyModuleLoadError",
   {
     platform: Schema.String,
@@ -23,41 +24,65 @@ export class NodePtyModuleLoadError extends Schema.TaggedErrorClass<NodePtyModul
 }
 
 type NodePtyModuleLoader = () => Promise<typeof import("node-pty")>;
+type NodePtyPackageJsonResolver = () => string;
 
-let didEnsureSpawnHelperExecutable = false;
+// Ключ — путь helper'а, а не один флаг на процесс: адаптеры с разными
+// резолверами (например, в тестах) должны chmod'ить каждый свой helper.
+const ensuredSpawnHelperPaths = new Set<string>();
 
-const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
-  const requireForNodePty = NodeModule.createRequire(import.meta.url);
-  const path = yield* Path.Path;
-  const fs = yield* FileSystem.FileSystem;
-  const platform = yield* HostProcessPlatform;
-  const architecture = yield* HostProcessArchitecture;
+const defaultNodePtyPackageJsonResolver: NodePtyPackageJsonResolver = () =>
+  NodeModule.createRequire(import.meta.url).resolve("node-pty/package.json");
 
-  const packageJsonPath = requireForNodePty.resolve("node-pty/package.json");
-  const packageDir = path.dirname(packageJsonPath);
-  const candidates = [
-    path.join(packageDir, "build", "Release", "spawn-helper"),
-    path.join(packageDir, "build", "Debug", "spawn-helper"),
-    path.join(packageDir, "prebuilds", `${platform}-${architecture}`, "spawn-helper"),
-  ];
+// node-pty stays external to the CLI bundle because it dlopens a native
+// addon. Inside a Node single-executable, `import()` cannot load files from
+// disk (only built-ins resolve), while `require` always reads the real
+// filesystem, so both the module and its spawn-helper resolve through it.
+const requireForNodePty = NodeModule.createRequire(import.meta.url);
 
-  for (const candidate of candidates) {
-    if (yield* fs.exists(candidate)) {
-      return candidate;
+const loadNodePty: NodePtyModuleLoader = () =>
+  Promise.resolve().then(() => requireForNodePty("node-pty") as typeof import("node-pty"));
+
+/** Injectable so tests can substitute a fake module; `require` bypasses module mocks. */
+export const NodePtyModuleLoaderRef = Context.Reference<NodePtyModuleLoader>(
+  "server/terminal/NodePtyModuleLoader",
+  { defaultValue: () => loadNodePty },
+);
+
+const resolveNodePtySpawnHelperPath = (resolvePackageJson: NodePtyPackageJsonResolver) =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    const platform = yield* HostProcessPlatform;
+    const architecture = yield* HostProcessArchitecture;
+
+    const packageDir = path
+      .dirname(resolvePackageJson())
+      .replace(/(^|[/\\])app\.asar(?=($|[/\\]))/, "$1app.asar.unpacked")
+      .replace(/(^|[/\\])node_modules\.asar(?=($|[/\\]))/, "$1node_modules.asar.unpacked");
+    const candidates = [
+      path.join(packageDir, "build", "Release", "spawn-helper"),
+      path.join(packageDir, "build", "Debug", "spawn-helper"),
+      path.join(packageDir, "prebuilds", `${platform}-${architecture}`, "spawn-helper"),
+    ];
+
+    for (const candidate of candidates) {
+      if (yield* fs.exists(candidate)) {
+        return candidate;
+      }
     }
-  }
-  return null;
-}).pipe(Effect.orElseSucceed(() => null));
+    return null;
+  }).pipe(Effect.orElseSucceed(() => null));
 
-const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
+const ensureNodePtySpawnHelperExecutable = Effect.fn(function* (
+  resolvePackageJson: NodePtyPackageJsonResolver,
+) {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;
   if (platform === "win32") return;
-  if (didEnsureSpawnHelperExecutable) return;
 
-  const helperPath = yield* resolveNodePtySpawnHelperPath;
-  if (!helperPath) return;
-  didEnsureSpawnHelperExecutable = true;
+  const helperPath = yield* resolveNodePtySpawnHelperPath(resolvePackageJson);
+  if (!helperPath || ensuredSpawnHelperPaths.has(helperPath)) return;
+  ensuredSpawnHelperPaths.add(helperPath);
 
   if (!(yield* fs.exists(helperPath))) {
     return;
@@ -69,9 +94,11 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
 
 class NodePtyProcess implements PtyAdapter.PtyProcess {
   private readonly process: import("node-pty").IPty;
+  private readonly platform: NodeJS.Platform;
 
-  constructor(process: import("node-pty").IPty) {
+  constructor(process: import("node-pty").IPty, platform: NodeJS.Platform) {
     this.process = process;
+    this.platform = platform;
   }
 
   get pid(): number {
@@ -87,7 +114,8 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   }
 
   kill(signal?: string): void {
-    this.process.kill(signal);
+    // node-pty terminates the Windows process tree without a POSIX signal.
+    this.process.kill(this.platform === "win32" ? undefined : signal);
   }
 
   onData(callback: (data: string) => void): () => void {
@@ -111,15 +139,17 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
 }
 
 export const make = Effect.fn("NodePtyAdapter.make")(function* (
-  loadNodePtyModule: NodePtyModuleLoader = () => import("node-pty"),
+  loadNodePtyModule?: NodePtyModuleLoader,
+  resolvePackageJson: NodePtyPackageJsonResolver = defaultNodePtyPackageJsonResolver,
 ) {
+  const moduleLoader = loadNodePtyModule ?? (yield* NodePtyModuleLoaderRef);
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
 
   const nodePty = yield* Effect.tryPromise({
-    try: loadNodePtyModule,
+    try: moduleLoader,
     catch: (cause) =>
       new NodePtyModuleLoadError({
         platform,
@@ -129,7 +159,7 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* (
   }).pipe(Effect.orDie);
 
   const ensureNodePtySpawnHelperExecutableCached = yield* Effect.cached(
-    ensureNodePtySpawnHelperExecutable().pipe(
+    ensureNodePtySpawnHelperExecutable(resolvePackageJson).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(HostProcessPlatform, platform),
@@ -141,14 +171,21 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* (
   return PtyAdapter.PtyAdapter.of({
     spawn: Effect.fn("NodePtyAdapter.spawn")(function* (input) {
       yield* ensureNodePtySpawnHelperExecutableCached;
+      // node-pty only writes `name` into the child's TERM on the Unix path;
+      // the ConPTY path leaves the environment untouched, so Windows children
+      // inherit a missing or 16-color TERM unless it is set here.
+      const env =
+        platform === "win32" && input.env["TERM"] === undefined
+          ? { ...input.env, TERM: "xterm-256color" }
+          : input.env;
       const ptyProcess = yield* Effect.try({
         try: () =>
           nodePty.spawn(input.shell, input.args ?? [], {
             cwd: input.cwd,
             cols: input.cols,
             rows: input.rows,
-            env: input.env,
-            name: platform === "win32" ? "xterm-color" : "xterm-256color",
+            env,
+            name: "xterm-256color",
           }),
         catch: (cause) =>
           new PtyAdapter.PtySpawnError({
@@ -157,7 +194,7 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* (
             cause,
           }),
       });
-      return new NodePtyProcess(ptyProcess);
+      return new NodePtyProcess(ptyProcess, platform);
     }),
   });
 });

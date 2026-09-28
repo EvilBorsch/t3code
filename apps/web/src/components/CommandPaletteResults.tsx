@@ -14,7 +14,7 @@ import {
   CommandList,
   CommandShortcut,
 } from "./ui/command";
-import { cn } from "~/lib/utils";
+import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 
 interface CommandPaletteResultsProps {
   emptyStateMessage?: string;
@@ -69,15 +69,20 @@ function DisabledCommandPaletteResultRow(props: {
   return (
     <div className="flex min-h-8 select-none items-center gap-2 rounded-sm px-2 py-1.5 text-base opacity-64 sm:min-h-7 sm:text-sm">
       {props.item.icon}
-      {props.item.description ? (
+      {props.item.description || props.item.threadContentMatch ? (
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
             {props.item.titleLeadingContent}
             <span className="truncate">{props.item.title}</span>
           </span>
-          <span className="truncate text-muted-foreground/70 text-xs">
-            {props.item.description}
-          </span>
+          {props.item.threadContentMatch ? (
+            <ThreadSearchMatchExcerpt match={props.item.threadContentMatch} />
+          ) : null}
+          {props.item.description ? (
+            <span className="min-w-0 text-muted-foreground/70 text-xs">
+              {props.item.description}
+            </span>
+          ) : null}
         </span>
       ) : (
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm text-foreground">
@@ -103,10 +108,7 @@ function CommandPaletteResultRow(props: {
   return (
     <CommandItem
       value={props.item.value}
-      className={cn(
-        "cursor-pointer gap-2 hover:bg-transparent hover:text-inherit data-highlighted:bg-transparent data-highlighted:text-inherit data-selected:bg-transparent data-selected:text-inherit [&[data-highlighted][data-selected]]:bg-transparent [&[data-highlighted][data-selected]]:text-inherit",
-        props.isActive && "bg-accent! text-accent-foreground!",
-      )}
+      active={props.isActive}
       onMouseDown={(event) => {
         event.preventDefault();
       }}
@@ -115,15 +117,20 @@ function CommandPaletteResultRow(props: {
       }}
     >
       {props.item.icon}
-      {props.item.description ? (
+      {props.item.description || props.item.threadContentMatch ? (
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
             {props.item.titleLeadingContent}
             <span className="truncate">{props.item.title}</span>
           </span>
-          <span className="truncate text-muted-foreground/70 text-xs">
-            {props.item.description}
-          </span>
+          {props.item.threadContentMatch ? (
+            <ThreadSearchMatchExcerpt match={props.item.threadContentMatch} />
+          ) : null}
+          {props.item.description ? (
+            <span className="min-w-0 text-muted-foreground/70 text-xs">
+              {props.item.description}
+            </span>
+          ) : null}
         </span>
       ) : (
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm text-foreground">
@@ -133,13 +140,13 @@ function CommandPaletteResultRow(props: {
       )}
       {props.item.titleTrailingContent}
       {props.item.timestamp ? (
-        <span className="min-w-12 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground/70">
+        <span className="min-w-12 shrink-0 text-right text-xs tabular-nums text-muted-foreground/70">
           {props.item.timestamp}
         </span>
       ) : null}
       {shortcutLabel ? <CommandShortcut>{shortcutLabel}</CommandShortcut> : null}
       {props.item.kind === "submenu" ? (
-        <ChevronRightIcon className="ml-auto size-4 shrink-0 text-muted-foreground/50" />
+        <ChevronRightIcon className="-me-0.5 ms-auto size-4 shrink-0 text-muted-foreground/70" />
       ) : null}
     </CommandItem>
   );

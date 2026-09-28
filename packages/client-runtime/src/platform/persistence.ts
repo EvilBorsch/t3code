@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  OrchestrationProjectShell,
   type OrchestrationShellSnapshot,
   type OrchestrationThreadDetailSnapshot,
   type ServerConfig,
@@ -14,13 +15,15 @@ import * as Schema from "effect/Schema";
 import type { ConnectionRegistration } from "../connection/catalog.ts";
 import type { ConnectionTarget } from "../connection/model.ts";
 
-export class ConnectionPersistenceError extends Schema.TaggedErrorClass<ConnectionPersistenceError>()(
+export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPersistenceError>()(
   "ConnectionPersistenceError",
   {
     operation: Schema.Literals([
       "list-targets",
+      "list-disabled-targets",
       "register-connection",
       "remove-connection",
+      "set-connection-enabled",
       "load-shell",
       "save-shell",
       "load-thread",
@@ -30,6 +33,8 @@ export class ConnectionPersistenceError extends Schema.TaggedErrorClass<Connecti
       "save-server-config",
       "load-vcs-refs",
       "save-vcs-refs",
+      "remove-vcs-refs",
+      "clear-vcs-refs",
       "clear-environment",
     ]),
     message: Schema.String,
@@ -40,6 +45,8 @@ export class ConnectionTargetStore extends Context.Service<
   ConnectionTargetStore,
   {
     readonly list: Effect.Effect<ReadonlyArray<ConnectionTarget>, ConnectionPersistenceError>;
+    /** Saved environments the user switched off. See `ConnectionRegistrationStore.setEnabled`. */
+    readonly listDisabled: Effect.Effect<ReadonlyArray<EnvironmentId>, ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/platform/persistence/ConnectionTargetStore") {}
 
@@ -50,6 +57,10 @@ export class ConnectionRegistrationStore extends Context.Service<
       registration: ConnectionRegistration,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly remove: (target: ConnectionTarget) => Effect.Effect<void, ConnectionPersistenceError>;
+    readonly setEnabled: (
+      environmentId: EnvironmentId,
+      enabled: boolean,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/platform/persistence/ConnectionRegistrationStore") {}
 
@@ -102,11 +113,38 @@ export class EnvironmentCacheStore extends Context.Service<
       cwd: string,
       refs: VcsListRefsResult,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
+    readonly removeVcsRefs: (
+      environmentId: EnvironmentId,
+      cwd: string,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
+    /**
+     * Removes every persisted branch-list snapshot for an environment. Git ref
+     * mutations are repository-wide, and linked worktrees may have cached the
+     * same refs under different working-directory keys.
+     */
+    readonly clearVcsRefs: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly clear: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/platform/persistence/EnvironmentCacheStore") {}
+
+const encodeProjectShells = Schema.encodeEffect(Schema.Array(OrchestrationProjectShell));
+
+/**
+ * Encodes a shell snapshot for `EnvironmentCacheStore.saveShell`. The result
+ * equals `Schema.encode(OrchestrationShellSnapshot)`, so the cache format does
+ * not change. Walking thousands of threads through Schema blocks the UI
+ * thread, and a decoded thread shell is already in its encoded form, so only
+ * the projects go through Schema: their icon has a real encode transform.
+ */
+export const encodeShellSnapshotForCache = (snapshot: OrchestrationShellSnapshot) =>
+  Effect.map(
+    encodeProjectShells(snapshot.projects),
+    (projects) => ({ ...snapshot, projects }) satisfies typeof OrchestrationShellSnapshot.Encoded,
+  );
 
 export class EnvironmentOwnedDataCleanup extends Context.Reference<{
   readonly clear: (environmentId: EnvironmentId) => Effect.Effect<void>;
