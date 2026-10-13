@@ -63,7 +63,7 @@ describe("CursorAdapterV2", () => {
           providerInstanceId: instanceId,
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer synthetic-cursor-token",
-          browserToolsAvailable: true,
+          capabilities: new Set(["orchestration", "worktree", "pull-requests", "html", "preview"]),
         });
         let sentWithMcpOverride = true;
         const modelSelection = { instanceId, model: "composer-2.5" };
@@ -219,6 +219,131 @@ describe("CursorAdapterV2", () => {
           Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
         ),
       ),
+  );
+
+  it.effect("describes only visual replies to an html-only session", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-html-" });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-html-only-thread");
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("cursor-html-only-environment"),
+        threadId,
+        providerSessionId: "cursor-html-only-mcp-session",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer cursor-html-only-token",
+        capabilities: new Set(["html"]),
+      });
+      let sentMessage = "";
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        settings: yield* decodeCursorSettings({}),
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-html-only",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: (input) =>
+                Effect.sync(() => {
+                  sentMessage =
+                    typeof input.message === "string" ? input.message : input.message.text;
+                  return {
+                    agentId: "native-cursor-html-only",
+                    runId: "native-cursor-html-only-run",
+                    wait: Effect.succeed({
+                      id: "native-cursor-html-only-run",
+                      requestId: "native-cursor-html-only-request",
+                      status: "finished" as const,
+                      model: { id: "composer-2.5" },
+                      durationMs: 1,
+                    }),
+                    cancel: Effect.void,
+                  };
+                }),
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-html-only-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("cursor-html-only-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("cursor-html-only-attempt"),
+        rootNodeId: NodeId.make("cursor-html-only-root"),
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("cursor-html-only-project"),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Cursor html only",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        message: {
+          messageId: MessageId.make("cursor-html-only-message"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "Chart the results.",
+          attachments: [],
+        },
+      });
+      yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runDrain,
+      );
+
+      assert.include(sentMessage, "T3 Code visual replies");
+      assert.include(sentMessage, "<runtime_info>");
+      assert.notInclude(sentMessage, "T3 Code orchestration");
+      assert.notInclude(sentMessage, "link_pull_request");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it.effect("fails standalone SDK transport diagnostics and sends compaction as /compress", () =>
@@ -893,7 +1018,7 @@ describe("CursorAdapterV2", () => {
       providerInstanceId: ProviderInstanceId.make("cursor"),
       endpoint: "http://127.0.0.1:43123/mcp",
       authorizationHeader: "Bearer secret-cursor-mcp-token",
-      browserToolsAvailable: true,
+      capabilities: new Set(["orchestration", "worktree", "pull-requests", "html", "preview"]),
     };
 
     assert.deepEqual(cursorMcpServers(mcpSession), {

@@ -24,7 +24,7 @@ What the fork still carries on top of upstream:
 - **Claude probe from a neutral directory** — the capability probe never runs in the server's working directory, which on desktop is `$HOME` and takes close to a minute to scan.
 - **Turn-fold prompt previews** — each collapsed turn shows the prompt that started it and jumps back to it.
 - **Codex model reroutes in the work log** — when Codex switches models mid-turn, the turn says so.
-- Agent browser access is **off** by default.
+- **Agent tool groups** — choose what T3 adds to agents (visual replies, thread tools, pull request tools, browser, devices) in Settings → Integrations; by default only visual replies, so agents otherwise see the same prompt and tools as in their own CLI. Agent browser access is **off** by default.
 
 [**`diff_with_master.md`**](./diff_with_master.md) is the full handoff document for everything that differs from upstream — themes, rationale, pitfalls, and the open follow-ups left by the last upstream merge.
 

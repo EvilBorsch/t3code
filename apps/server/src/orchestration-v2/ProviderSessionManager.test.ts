@@ -12,9 +12,11 @@ import {
   type OrchestrationV2ProviderThread,
   type Project,
   ProjectId,
+  type ProjectSettingsOverrides,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
+  type ServerSettingsPatch,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -603,10 +605,19 @@ function makeBrowserAccessProject(projectId: ProjectId): Project {
   };
 }
 
-function runBrowserAccessScenario(input: {
-  readonly enableAgentBrowserAccess: boolean;
-  readonly projectOverride: boolean;
-  readonly deviceOverride?: boolean;
+const agentAccessProjectId = ProjectId.make("project-provider-session-manager-browser-access");
+
+/**
+ * Открывает сессию одного треда при заданных настройках и после каждого
+ * открытия возвращает MCP credential: config треда и то, что выдаёт реестр.
+ * С `reopenWith` тред отсоединяется, к настройкам применяется патч, и сессия
+ * открывается снова. `liveCredentialIds` — credential открытий, которые
+ * реестр ещё принимает в конце.
+ */
+function runAgentAccessScenario(input: {
+  readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
+  readonly projectOverrides?: ProjectSettingsOverrides;
+  readonly reopenWith?: ServerSettingsPatch;
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
 }) {
@@ -615,7 +626,6 @@ function runBrowserAccessScenario(input: {
     const mcpConfigs = yield* Ref.make<
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >([]);
-    const projectId = ProjectId.make("project-provider-session-manager-browser-access");
     const threadId = ThreadId.make("thread-provider-session-manager-browser-access");
     const layerProjectService = Layer.mock(ProjectService.ProjectService)({
       getById: (requestedProjectId) =>
@@ -626,10 +636,20 @@ function runBrowserAccessScenario(input: {
         ),
     });
 
-    yield* Effect.gen(function* () {
+    const layerSettings = ServerSettings.layerTest({
+      ...input.settings,
+      ...(input.projectOverrides === undefined
+        ? {}
+        : { projectSettingsOverrides: { [agentAccessProjectId]: input.projectOverrides } }),
+    });
+
+    const result = yield* Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
       const now = yield* DateTime.now;
       const providerSessionId = yield* idAllocator.allocate.providerSession({
         providerInstanceId: modelSelection.instanceId,
@@ -637,35 +657,58 @@ function runBrowserAccessScenario(input: {
       });
       if (input.createThread !== false) {
         yield* eventSink.write({
-          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now, projectId })],
+          events: [
+            yield* makeThreadCreatedEvent({
+              idAllocator,
+              threadId,
+              now,
+              projectId: agentAccessProjectId,
+            }),
+          ],
         });
       }
-      yield* manager
-        .open({ threadId, providerSessionId, modelSelection, runtimePolicy })
-        .pipe(Effect.ignore);
+      const open = Effect.gen(function* () {
+        yield* manager
+          .open({ threadId, providerSessionId, modelSelection, runtimePolicy })
+          .pipe(Effect.ignore);
+        const config = yield* mcpSessions.read(threadId);
+        const scope =
+          config === undefined
+            ? undefined
+            : yield* registry.resolve(config.authorizationHeader.replace(/^Bearer\s+/, ""));
+        return { config, capabilities: scope?.capabilities };
+      });
+      const opens = [yield* open];
+      if (input.reopenWith !== undefined) {
+        yield* manager.detach({ providerSessionId, threadId });
+        yield* serverSettings.updateSettings(input.reopenWith).pipe(Effect.orDie);
+        opens.push(yield* open);
+      }
+      const liveCredentialIds = yield* Effect.filter(
+        opens.flatMap(({ config }) => (config === undefined ? [] : [config])),
+        (config) =>
+          registry
+            .resolve(config.authorizationHeader.replace(/^Bearer\s+/, ""))
+            .pipe(Effect.map((scope) => scope !== undefined)),
+      ).pipe(Effect.map((configs) => configs.map((config) => config.providerSessionId)));
+      return { opens, liveCredentialIds };
     }).pipe(
       Effect.provide(
-        layerTest({
-          state,
-          idleTimeoutMs: 1_000,
-          mcpConfigs,
-          projectServiceLayer: layerProjectService,
-          serverSettingsLayer: ServerSettings.layerTest({
-            enableAgentBrowserAccess: input.enableAgentBrowserAccess,
-            projectSettingsOverrides: {
-              [projectId]: {
-                enableAgentBrowserAccess: input.projectOverride,
-                ...(input.deviceOverride === undefined
-                  ? {}
-                  : { enableAgentDeviceAccess: input.deviceOverride }),
-              },
-            },
+        Layer.merge(
+          layerTest({
+            state,
+            idleTimeoutMs: 1_000,
+            mcpConfigs,
+            projectServiceLayer: layerProjectService,
+            serverSettingsLayer: layerSettings,
           }),
-        }),
+          // Тот же экземпляр слоя, чтобы обновление настроек дошло до менеджера.
+          layerSettings,
+        ),
       ),
     );
 
-    return (yield* Ref.get(mcpConfigs))[0];
+    return { ...result, adapterConfigs: yield* Ref.get(mcpConfigs) };
   });
 }
 
@@ -1831,9 +1874,10 @@ it.effect(
         assert.isDefined(token);
         const resolved = yield* registry.resolve(token!);
         assert.equal(resolved?.thread.threadId, threadId);
+        // Без сервиса настроек включены все группы, кроме device, как в upstream.
         assert.deepEqual(
           resolved?.capabilities,
-          new Set(["preview", "orchestration", "worktree", "pull-requests"]),
+          new Set(["preview", "orchestration", "worktree", "pull-requests", "html"]),
         );
 
         yield* manager.close(providerSessionId);
@@ -1885,12 +1929,12 @@ it.effect(
 
         const captured = (yield* Ref.get(mcpConfigs))[0];
         assert.isDefined(captured);
-        assert.equal(captured?.browserToolsAvailable, false);
+        assert.isFalse(captured?.capabilities.has("preview"));
         const token = captured?.authorizationHeader.replace(/^Bearer\s+/, "");
         const resolved = yield* registry.resolve(token!);
         assert.deepEqual(
           resolved?.capabilities,
-          new Set(["orchestration", "worktree", "pull-requests"]),
+          new Set(["orchestration", "worktree", "pull-requests", "html"]),
         );
 
         yield* manager.close(providerSessionId);
@@ -1906,6 +1950,8 @@ it.effect(
             // occur for a literal override and the slot requires error never.
             serverSettingsLayer: ServerSettings.layerTest({
               enableAgentBrowserAccess: false,
+              enableAgentThreadTools: true,
+              enableAgentPullRequestTools: true,
             }).pipe(Layer.orDie),
           }),
         ),
@@ -1913,49 +1959,116 @@ it.effect(
     }),
 );
 
+it.effect("ProviderSessionManagerV2 gives agents only visual replies by default", () =>
+  Effect.gen(function* () {
+    const { opens } = yield* runAgentAccessScenario({});
+    assert.deepEqual(opens[0]?.capabilities, new Set(["html"]));
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 attaches no MCP server with every tool group off", () =>
+  Effect.gen(function* () {
+    const { opens, adapterConfigs } = yield* runAgentAccessScenario({
+      settings: { enableAgentVisualReplies: false },
+    });
+    assert.deepEqual(adapterConfigs, [undefined]);
+    assert.isUndefined(opens[0]?.config);
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 grants every enabled tool group", () =>
+  Effect.gen(function* () {
+    const { opens } = yield* runAgentAccessScenario({
+      settings: {
+        enableAgentThreadTools: true,
+        enableAgentPullRequestTools: true,
+        enableAgentVisualReplies: true,
+        enableAgentBrowserAccess: true,
+      },
+    });
+    assert.deepEqual(
+      opens[0]?.capabilities,
+      new Set(["html", "orchestration", "worktree", "pull-requests", "preview"]),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 honors a project thread-tools opt-in", () =>
+  Effect.gen(function* () {
+    const { opens } = yield* runAgentAccessScenario({
+      projectOverrides: { enableAgentThreadTools: true },
+    });
+    assert.deepEqual(opens[0]?.capabilities, new Set(["html", "orchestration", "worktree"]));
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 rotates the credential when a tool group is toggled", () =>
+  Effect.gen(function* () {
+    const { opens, liveCredentialIds } = yield* runAgentAccessScenario({
+      reopenWith: { enableAgentPullRequestTools: true },
+    });
+    const [before, after] = opens;
+    assert.deepEqual(before?.capabilities, new Set(["html"]));
+    assert.deepEqual(after?.capabilities, new Set(["html", "pull-requests"]));
+    assert.notEqual(after?.config?.providerSessionId, before?.config?.providerSessionId);
+    assert.deepEqual(liveCredentialIds, [after?.config?.providerSessionId]);
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 revokes the credential when every tool group is turned off",
+  () =>
+    Effect.gen(function* () {
+      const { opens, liveCredentialIds } = yield* runAgentAccessScenario({
+        reopenWith: { enableAgentVisualReplies: false },
+      });
+      assert.isDefined(opens[0]?.config);
+      assert.isUndefined(opens[1]?.config);
+      assert.deepEqual(liveCredentialIds, []);
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 honors a project browser-access opt-out", () =>
   Effect.gen(function* () {
-    const captured = yield* runBrowserAccessScenario({
-      enableAgentBrowserAccess: true,
-      projectOverride: false,
+    const { opens } = yield* runAgentAccessScenario({
+      settings: { enableAgentBrowserAccess: true },
+      projectOverrides: { enableAgentBrowserAccess: false },
     });
-    assert.isDefined(captured);
-    assert.equal(captured?.browserToolsAvailable, false);
+    assert.isDefined(opens[0]?.config);
+    assert.isFalse(opens[0]?.config?.capabilities.has("preview"));
   }),
 );
 
 it.effect("ProviderSessionManagerV2 honors a project browser-access opt-in", () =>
   Effect.gen(function* () {
-    const captured = yield* runBrowserAccessScenario({
-      enableAgentBrowserAccess: false,
-      projectOverride: true,
+    const { opens } = yield* runAgentAccessScenario({
+      settings: { enableAgentBrowserAccess: false },
+      projectOverrides: { enableAgentBrowserAccess: true },
     });
-    assert.isDefined(captured);
-    assert.equal(captured?.browserToolsAvailable, true);
+    assert.isTrue(opens[0]?.config?.capabilities.has("preview"));
   }),
 );
 
-it.effect("ProviderSessionManagerV2 fails browser access closed for a missing project", () =>
+it.effect("ProviderSessionManagerV2 fails project tool groups closed for a missing project", () =>
   Effect.gen(function* () {
-    const captured = yield* runBrowserAccessScenario({
-      enableAgentBrowserAccess: true,
-      projectOverride: true,
+    const { opens } = yield* runAgentAccessScenario({
+      settings: { enableAgentBrowserAccess: true, enableAgentPullRequestTools: true },
+      projectOverrides: { enableAgentBrowserAccess: true, enableAgentThreadTools: true },
       projectExists: false,
     });
-    assert.isDefined(captured);
-    assert.equal(captured?.browserToolsAvailable, false);
+    // Переопределённые группы закрыты; остальные берут значение окружения.
+    assert.deepEqual(opens[0]?.capabilities, new Set(["html", "pull-requests"]));
   }),
 );
 
-it.effect("ProviderSessionManagerV2 fails browser access closed for a missing thread", () =>
+it.effect("ProviderSessionManagerV2 fails agent access closed for a missing thread", () =>
   Effect.gen(function* () {
-    const captured = yield* runBrowserAccessScenario({
-      enableAgentBrowserAccess: true,
-      projectOverride: true,
+    const { opens } = yield* runAgentAccessScenario({
+      settings: { enableAgentBrowserAccess: true },
+      projectOverrides: { enableAgentBrowserAccess: true },
       createThread: false,
     });
-    assert.isDefined(captured);
-    assert.equal(captured?.browserToolsAvailable, false);
+    assert.isUndefined(opens[0]?.config);
   }),
 );
 
@@ -4707,19 +4820,15 @@ it.effect(
   "ProviderSessionManagerV2 applies project device access independently of browser access",
   () =>
     Effect.gen(function* () {
-      const enabled = yield* runBrowserAccessScenario({
-        enableAgentBrowserAccess: false,
-        projectOverride: false,
-        deviceOverride: true,
+      const enabled = yield* runAgentAccessScenario({
+        projectOverrides: { enableAgentBrowserAccess: false, enableAgentDeviceAccess: true },
       });
-      assert.isTrue(enabled?.capabilities?.has("device"));
-      assert.isFalse(enabled?.browserToolsAvailable);
-      const denied = yield* runBrowserAccessScenario({
-        enableAgentBrowserAccess: false,
-        projectOverride: false,
-        deviceOverride: true,
+      assert.isTrue(enabled.opens[0]?.capabilities?.has("device"));
+      assert.isFalse(enabled.opens[0]?.config?.capabilities.has("preview"));
+      const denied = yield* runAgentAccessScenario({
+        projectOverrides: { enableAgentBrowserAccess: false, enableAgentDeviceAccess: true },
         projectExists: false,
       });
-      assert.isFalse(denied?.capabilities?.has("device"));
+      assert.isFalse(denied.opens[0]?.capabilities?.has("device"));
     }),
 );

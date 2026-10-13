@@ -277,6 +277,9 @@ export function handoffCoverage(input: {
   return [
     `Provider context handoff. Thread: ${input.threadId}. Covered app runs: ${input.coveredRunOrdinals.from}-${input.coveredRunOrdinals.to}.`,
     `Source item range: ${input.items.at(0)?.id ?? "none"} through ${input.items.at(-1)?.id ?? "none"}.`,
-    `Recover omitted history using t3_thread_read({threadId:"${input.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. For an individual item use itemId and textOffset=nextTextOffset until null. Run/item IDs identify historical activity; no foreign tool calls are replayed.`,
+    // Подсказка про t3_thread_read стоит отдельной строкой: доставка убирает её
+    // для сессии без инструментов тредов.
+    `Recover omitted history using t3_thread_read({threadId:"${input.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. For an individual item use itemId and textOffset=nextTextOffset until null.`,
+    "Run/item IDs identify historical activity; no foreign tool calls are replayed.",
   ].join("\n");
 }

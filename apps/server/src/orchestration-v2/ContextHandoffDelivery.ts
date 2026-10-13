@@ -24,6 +24,8 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     readonly budget: number | Effect.Effect<number, BudgetError>;
     readonly deferInline?: boolean;
     readonly alreadyDeliveredItemIds: ReadonlySet<string>;
+    /** Есть ли у принимающей сессии инструменты тредов, чтобы подсказки могли их называть. */
+    readonly threadReadAvailable: boolean;
     readonly inject?: (
       history: ProviderAdapter.ProviderAdapterV2HistoricalContext,
     ) => Effect.Effect<boolean, InjectError>;
@@ -40,20 +42,33 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       return { context: "", delivered: Effect.void, unsent: Effect.void };
     const budget = typeof input.budget === "number" ? input.budget : yield* input.budget;
     let coverage = pending
-      .map(
-        (handoff) =>
-          `Context handoff (${handoff.strategy === "fork_delta_summary" ? "merge_back / fork_delta_summary" : handoff.strategy}):\n${
-            handoff.history?.coverage ??
-            `From thread ${handoff.threadId}, runs ${handoff.coveredRunOrdinals.from}-${handoff.coveredRunOrdinals.to}. Recover history with t3_thread_read, view=activity; paginate with afterPosition, and use itemId/textOffset for long items.`
-          }`,
-      )
+      .map((handoff) => {
+        // Записанный coverage называет t3_thread_read отдельной строкой; сессию
+        // без инструментов тредов нельзя к нему отсылать.
+        const recorded = handoff.history?.coverage
+          .split("\n")
+          .filter((line) => input.threadReadAvailable || !line.includes("t3_thread_read"))
+          .join("\n");
+        return `Context handoff (${handoff.strategy === "fork_delta_summary" ? "merge_back / fork_delta_summary" : handoff.strategy}):\n${
+          recorded ??
+          `From thread ${handoff.threadId}, runs ${handoff.coveredRunOrdinals.from}-${handoff.coveredRunOrdinals.to}.${
+            input.threadReadAvailable
+              ? " Recover history with t3_thread_read, view=activity; paginate with afterPosition, and use itemId/textOffset for long items."
+              : ""
+          }`
+        }`;
+      })
       .join("\n");
     // Repeated failures can accumulate many recovery markers. Keep a single
     // thread-level entry point when detailed coverage would crowd out history;
     // its activity includes the original handoff/fork source references.
     if (historyCost([], coverage) > Math.min(4_000, budget / 2)) {
       const strategies = Array.from(new Set(pending.map((handoff) => handoff.strategy)));
-      coverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover history with t3_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. Follow fork/handoff source references in activity. For long items use itemId and textOffset=nextTextOffset until null.`;
+      coverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted.${
+        input.threadReadAvailable
+          ? ` Recover history with t3_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. Follow fork/handoff source references in activity. For long items use itemId and textOffset=nextTextOffset until null.`
+          : ""
+      }`;
     }
     const seen = new Set(input.alreadyDeliveredItemIds);
     const messages = pending

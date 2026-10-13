@@ -389,6 +389,7 @@ export function layerWithRegistry<Error>(
         layerContextHandoffServiceProvided,
         layerEventSinkProvided,
         IdAllocator.layer,
+        McpProviderSessions.layer,
         layerStores,
         layerProviderSessionManagerProvided,
         Layer.mock(ProviderAuthService.ProviderAuthService)({
@@ -400,7 +401,9 @@ export function layerWithRegistry<Error>(
     ),
   );
   const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
-    Layer.provide(Layer.merge(layerStores, layerProviderSessionManagerProvided)),
+    Layer.provide(
+      Layer.mergeAll(layerStores, layerProviderSessionManagerProvided, McpProviderSessions.layer),
+    ),
   );
   const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
     Layer.provide(Layer.merge(layerStores, layerProviderSessionManagerProvided)),

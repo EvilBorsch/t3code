@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
 import {
   CheckpointId,
+  EnvironmentId,
   NodeId,
   ProjectId,
   ProviderInstanceId,
@@ -148,6 +149,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   suffix: string,
   nativeSessionId: string,
   client: object,
+  options: { readonly external: boolean } = { external: true },
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
@@ -163,7 +165,8 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     environment: {},
   }).pipe(
     Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, {
-      connectToOpenCodeServer: () => Effect.succeed({ url: "http://test.invalid", external: true }),
+      connectToOpenCodeServer: () =>
+        Effect.succeed({ url: "http://test.invalid", external: options.external, exitCode: null }),
       createOpenCodeSdkClient: () => client,
     } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"]),
     Effect.provideService(ProviderHost.ProviderHost, {
@@ -1237,6 +1240,61 @@ describe("OpenCodeAdapterV2", () => {
       yield* Fiber.join(start);
       assert.equal(promptCalls, 0);
       release.resolve();
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("describes only visual replies to an html-only session", () =>
+    Effect.gen(function* () {
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-opencode-html-only"),
+        threadId: ThreadId.make("thread-opencode-html-only"),
+        providerSessionId: "mcp-session-opencode-html-only",
+        providerInstanceId: ProviderInstanceId.make("opencode-html-only"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer opencode-html-only",
+        capabilities: new Set(["html"]),
+      });
+      const nativeEvents = asyncEventStream();
+      const addedServers: Array<string> = [];
+      const systemPrompts: Array<string> = [];
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "html-only",
+        "html-only",
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), {
+                once: true,
+              });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          mcp: {
+            add: async (input: { name: string }) => {
+              addedServers.push(input.name);
+              return { data: {} };
+            },
+          },
+          session: {
+            create: async () => ({ data: { id: "html-only", time: { created: 1, updated: 1 } } }),
+            promptAsync: async (input: { system: string }) => {
+              systemPrompts.push(input.system);
+              return { data: true };
+            },
+          },
+        },
+        { external: false },
+      );
+      yield* harness.startTurn("Chart the results.");
+
+      assert.deepEqual(addedServers, ["t3-code"]);
+      assert.include(systemPrompts[0], "T3 Code visual replies");
+      assert.include(systemPrompts[0], "<runtime_info>");
+      assert.notInclude(systemPrompts[0], "T3 Code orchestration");
+      assert.notInclude(systemPrompts[0], "link_pull_request");
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,

@@ -2,6 +2,8 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ComposerContextId,
+  EnvironmentId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -13,6 +15,7 @@ import {
   RunId,
   ThreadId,
   ProjectId,
+  type OrchestrationMessageContext,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
@@ -30,6 +33,7 @@ import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -95,6 +99,7 @@ it("does not commit running state when inherited background routing cannot be re
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
+        McpProviderSessions.layer,
         Layer.succeed(FileSystem.FileSystem, { exists: () => Effect.succeed(false) } as never),
         Layer.mock(GitWorkflow.GitWorkflowService)({ pruneWorktrees, createWorktree }),
         Layer.mock(ProjectService.ProjectService)({
@@ -155,6 +160,11 @@ it("does not commit running state when inherited background routing cannot be re
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly context?: OrchestrationMessageContext;
+  /** Открывает нативную сессию и передаёт run на исполнение. */
+  readonly startsNativeTurn?: boolean;
+  /** Есть ли у T3 MCP-сессии треда инструменты тредов. */
+  readonly threadTools?: boolean;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
   readonly logoutFailure?: string;
@@ -173,6 +183,7 @@ function makeLocalCommandHarness(input: {
   readonly failReadsAfterRunning?: boolean;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
+  const startsNativeTurn = input.startsNativeTurn === true || input.failReadsAfterRunning === true;
   const threadId = ThreadId.make("thread-native-account-command");
   const runId = RunId.make("run-native-account-command");
   const rootNodeId = NodeId.make("root-native-account-command");
@@ -225,6 +236,7 @@ function makeLocalCommandHarness(input: {
     nodeId: rootNodeId,
     role: "user",
     text: input.text,
+    ...(input.context === undefined ? {} : { context: input.context }),
     attachments: [],
     streaming: false,
     createdBy: "user",
@@ -414,7 +426,7 @@ function makeLocalCommandHarness(input: {
                   ),
                 ),
               )
-            : input.failReadsAfterRunning === true
+            : startsNativeTurn
               ? Effect.succeed({
                   driver: providerThread.driver,
                   providerSession: {
@@ -436,9 +448,7 @@ function makeLocalCommandHarness(input: {
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
   >(() =>
-    input.failReadsAfterRunning === true
-      ? Effect.void
-      : Effect.die("A local command must not start a native turn."),
+    startsNativeTurn ? Effect.void : Effect.die("A local command must not start a native turn."),
   );
   const failReadIfRunning = Effect.suspend(() =>
     input.failReadsAfterRunning === true &&
@@ -491,6 +501,20 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
+        Layer.mock(McpProviderSessions.McpProviderSessions)({
+          read: () =>
+            Effect.succeed({
+              environmentId: EnvironmentId.make("environment-native-account-command"),
+              threadId,
+              providerSessionId: "mcp-native-account-command",
+              providerInstanceId: newInstanceId,
+              endpoint: "http://127.0.0.1/mcp",
+              authorizationHeader: "Bearer mcp-native-account-command",
+              capabilities: new Set(
+                input.threadTools === true ? ["html", "orchestration"] : ["html"],
+              ),
+            }),
+        }),
         FileSystem.layerNoop({}),
         Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
@@ -753,6 +777,40 @@ effectIt.effect("does not mistake a failed state read for a superseded run", () 
     const finalizeCheck = yield* Effect.flip(controls.shouldFinalizeRun!());
     expect(startCheck._tag).toBe("ProjectionStoreReadError");
     expect(finalizeCheck._tag).toBe("ProjectionStoreReadError");
+  }),
+);
+
+effectIt.effect("points an attached thread at t3_thread_read only when the agent has it", () =>
+  Effect.gen(function* () {
+    const sentText = (threadTools: boolean) =>
+      Effect.gen(function* () {
+        const harness = makeLocalCommandHarness({
+          text: "Compare with [Login fix](t3-context://v1/thread/ctx_login)",
+          context: {
+            version: 1,
+            records: [
+              {
+                version: 1,
+                kind: "thread",
+                contextId: ComposerContextId.make("ctx_login"),
+                label: "Login fix",
+                environmentId: EnvironmentId.make("environment-login"),
+                threadId: ThreadId.make("thread-login-fix"),
+                title: "Fix login flow",
+              },
+            ],
+          },
+          startsNativeTurn: true,
+          threadTools,
+        });
+        yield* harness.start;
+        return harness.startRootRun.mock.calls[0]?.[0].message.text;
+      });
+
+    const withoutThreadTools = yield* sentText(false);
+    expect(withoutThreadTools).toContain("threadId: thread-login-fix");
+    expect(withoutThreadTools).not.toContain("t3_thread_read");
+    expect(yield* sentText(true)).toContain("t3_thread_read(threadId)");
   }),
 );
 

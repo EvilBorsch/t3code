@@ -45,14 +45,21 @@ Before `ProviderSessionManager` opens a new V2 provider session, it asks
 - the concrete provider instance; and
 - the provider session.
 
-The credential grants `preview` and `orchestration` capabilities. Credentials
-expire after a maximum lifetime, expire when idle, and are revoked when the
-provider session is released. The raw token is not persisted in orchestration
-state.
+The credential grants one capability set per agent tool group the thread's
+project settings enable: visual replies (`html`), thread tools
+(`orchestration`, `worktree`), pull request tools (`pull-requests`), browser
+(`preview`) and device (`device`). A changed set rotates the credential; with
+every group off no credential is issued and the `t3-code` server is not
+attached. Credentials expire after a maximum lifetime, expire when idle, and
+are revoked when the provider session is released. The raw token is not
+persisted in orchestration state.
 
 The MCP HTTP server resolves the bearer token and supplies the resulting
-`McpInvocationScope` to tool handlers. Orchestration handlers additionally
-check the `orchestration` capability before reading or mutating state.
+`McpInvocationScope` to tool handlers. Effect's `McpServer` lists every
+registered tool to every caller, so the `/mcp` auth middleware drops tools
+outside the caller's capabilities from `tools/list` and refuses them in
+`tools/call` (`toolkitCapabilities` in `apps/server/src/mcp/McpHttpServer.ts`;
+a new toolkit must be added there).
 
 ## Provider Injection
 
@@ -168,8 +175,8 @@ available; optional tools are discovered through Pi's builtin `tool_search`.
 On older Pi or without builtin search, all tools remain directly available.
 The bridge calls the original MCP tool name over HTTP. Follow-up requests send
 `mcp-protocol-version: 2025-06-18`; Effect's MCP transport returns 400
-without it. The first turn of a session also receives the shared T3
-orchestration instructions.
+without it. `T3_PI_SYSTEM_PROMPT` carries T3's instructions for the tool groups
+the credential grants; the extension appends it to Pi's system prompt.
 
 Pi keeps ownership of native extension discovery. T3 does not replace Pi's
 `subagent` tool or reproduce Pi's package and project-trust loader. Durable

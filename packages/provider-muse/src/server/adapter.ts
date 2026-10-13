@@ -2020,11 +2020,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 input: [
                   {
                     type: "text",
-                    text: buildRuntimeInstructions({
-                      harness: "Muse Code",
-                      model: session.model ?? undefined,
-                      reasoningEffort: effort,
-                    }),
+                    text: buildRuntimeInstructions(
+                      {
+                        harness: "Muse Code",
+                        model: session.model ?? undefined,
+                        reasoningEffort: effort,
+                      },
+                      McpProviderSession.t3AgentTools(yield* mcpSessions.read(turnInput.threadId)),
+                    ),
                   },
                   ...parts,
                 ],

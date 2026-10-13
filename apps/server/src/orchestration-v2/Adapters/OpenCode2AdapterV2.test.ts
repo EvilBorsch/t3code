@@ -3411,7 +3411,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           providerInstanceId: instanceId,
           endpoint: "http://127.0.0.1:3773/mcp",
           authorizationHeader: "Bearer thread-credential",
-          browserToolsAvailable: false,
+          capabilities: new Set(["orchestration", "worktree", "pull-requests", "html"]),
         });
         yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
         const server = "t3-code-thread_opencode2-adapter";
@@ -3457,7 +3457,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         providerInstanceId: instanceId,
         endpoint: "http://127.0.0.1:3773/mcp",
         authorizationHeader: "Bearer thread-credential",
-        browserToolsAvailable: false,
+        capabilities: new Set(["orchestration", "worktree", "pull-requests", "html"]),
       });
       yield* Effect.addFinalizer(() => mcpSessions.clear(child));
       const runtime = yield* openCode2ReplayRuntimeWithInstructions([

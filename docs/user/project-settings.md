@@ -110,7 +110,7 @@ than** on the task.
 ## Defaults and inheritance
 
 General contains the model and workspace for new threads. Integrations controls agent browser
-access. Source Control contains automatic pull, the default pull request merge method and text
+access and the other [agent tools](#agent-tools). Source Control contains automatic pull, the default pull request merge method and text
 generation. The same rows edit environment defaults or project overrides depending on the
 project crumb.
 
@@ -130,6 +130,24 @@ selected to override it there) to **Top level only** to stop at the ones the rep
 itself, or **Skip** to leave them for a setup script. It resolves in the same order as the
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
+
+## Agent tools
+
+Choose which T3 Code tools agents get in **Settings → Integrations**:
+
+- **Agent visual replies** let agents answer with HTML pages such as charts, tables, diagrams and
+  mockups.
+- **Agent thread tools** let agents delegate to other models, start and read threads, schedule
+  tasks and manage worktrees.
+- **Agent pull request tools** let agents link pull requests to the thread and watch them for
+  checks and reviews.
+- **Agent browser access** lets agents use the shared browser.
+- **Agent device access**, under **Devices**, lets agents drive simulators and emulators.
+
+Only visual replies are on by default. Select a project to override any of them for that project.
+Changes apply when an agent session next starts. With everything off, agents get the same
+instructions and tools they have in their own CLI, plus a short note that they are running in
+T3 Code.
 
 ## Worktree location
 

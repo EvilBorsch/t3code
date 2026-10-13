@@ -32,6 +32,7 @@ import {
 } from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { t3AgentTools } from "@t3tools/provider-core/server/mcpSession";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
@@ -1524,6 +1525,7 @@ async function recordClaudeStreamingQuery(input: {
         }
       : undefined;
   const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+    t3Tools: t3AgentTools(undefined),
     modelSelection: input.modelSelection,
     nativeThreadId: input.sessionId,
     resume: false,
@@ -1712,6 +1714,7 @@ async function recordClaudeActiveSteeringQuery(input: {
         }
       : undefined;
   const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+    t3Tools: t3AgentTools(undefined),
     modelSelection: input.modelSelection,
     nativeThreadId: input.sessionId,
     resume: false,
@@ -1791,6 +1794,7 @@ async function recordClaudeRestartingQueries(input: {
   for (const [index, prompt] of input.prompts.entries()) {
     const promptQueue = new RecordingPromptQueue();
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      t3Tools: t3AgentTools(undefined),
       modelSelection: input.modelSelection,
       nativeThreadId: input.sessionId,
       resume: index > 0,
@@ -1884,6 +1888,7 @@ async function recordClaudeResumeAtCursorQuery(input: {
 
   const sourcePromptQueue = new RecordingPromptQueue();
   const sourceOptions = ClaudeAdapterV2.makeClaudeQueryOptions({
+    t3Tools: t3AgentTools(undefined),
     modelSelection: input.modelSelection,
     nativeThreadId: input.sessionId,
     resume: false,
@@ -1954,6 +1959,7 @@ async function recordClaudeResumeAtCursorQuery(input: {
     const resumedPromptQueue = new RecordingPromptQueue();
     const resumedOptions = {
       ...ClaudeAdapterV2.makeClaudeQueryOptions({
+        t3Tools: t3AgentTools(undefined),
         modelSelection: input.modelSelection,
         nativeThreadId: input.sessionId,
         resume: true,
@@ -2067,6 +2073,7 @@ async function recordClaudeForkSessionQuery(input: {
 
   const sourcePromptQueue = new RecordingPromptQueue();
   const sourceOptions = ClaudeAdapterV2.makeClaudeQueryOptions({
+    t3Tools: t3AgentTools(undefined),
     modelSelection: input.modelSelection,
     nativeThreadId: input.sessionId,
     resume: false,
@@ -2175,6 +2182,7 @@ async function recordClaudeForkSessionQuery(input: {
 
       const targetPromptQueue = new RecordingPromptQueue();
       const targetOptions = ClaudeAdapterV2.makeClaudeQueryOptions({
+        t3Tools: t3AgentTools(undefined),
         modelSelection: input.modelSelection,
         nativeThreadId: forked.sessionId,
         resume: true,
@@ -2233,6 +2241,7 @@ async function recordClaudeForkSessionQuery(input: {
     if (sourceContinuationPromptCount > 0) {
       const continuationPromptQueue = new RecordingPromptQueue();
       const continuationOptions = ClaudeAdapterV2.makeClaudeQueryOptions({
+        t3Tools: t3AgentTools(undefined),
         modelSelection: input.modelSelection,
         nativeThreadId: input.sessionId,
         resume: true,
@@ -2324,6 +2333,7 @@ async function recordInterruptedClaudeQuery(input: {
 }): Promise<void> {
   const promptQueue = new RecordingPromptQueue();
   const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+    t3Tools: t3AgentTools(undefined),
     modelSelection: input.modelSelection,
     nativeThreadId: input.sessionId,
     resume: input.resume,
@@ -2505,6 +2515,7 @@ async function recordClaudeInterruptRestartQuery(input: {
 
   const secondPromptQueue = new RecordingPromptQueue();
   const secondOptions = ClaudeAdapterV2.makeClaudeQueryOptions({
+    t3Tools: t3AgentTools(undefined),
     modelSelection: input.modelSelection,
     nativeThreadId: input.sessionId,
     resume: true,

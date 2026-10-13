@@ -258,7 +258,8 @@ and their marks follow the same rules as on web and desktop.
 A thread can hold several pull requests, including reviews from another repository on the same host.
 Use **Link pull request** in the command palette or **Linked pull requests** panel, or right-click a
 pull request link in the conversation. Creating a pull request from Git actions links it automatically.
-Agents can link their pull requests with the `link_pull_request` tool.
+Agents can link their pull requests with the `link_pull_request` tool when **Agent pull request
+tools** is on in **Settings → Integrations** (see [Agent tools](project-settings.md#agent-tools)).
 
 Use **Link this PR** in a branch-detected badge's tooltip to keep it with the thread. From a review
 on the Pull Requests page, **Link to thread** lets you search for an active thread. The review header
@@ -274,10 +275,11 @@ closed reviews refresh periodically so reopening one on the host is detected. Me
 when requested. A settled thread's reviews stop refreshing until you unsettle it. With **Auto-settle merged threads** enabled, a thread can settle after every linked
 review is terminal. An open or unsynced link keeps it active.
 
-Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_pull_request`. While
-the thread is active, the server checks the pull request every two minutes and wakes the agent when a
-check fails, the required checks pass, someone else comments or reviews, or the branch starts to
-conflict. Threads in a project that watch the same pull request share one check. On GitHub, a check
+With **Agent pull request tools** on, ask the agent to watch, monitor, or babysit a pull request
+and it calls `watch_pull_request`. While the thread is active, the server checks the pull request
+every two minutes and wakes the agent when a check fails, the required checks pass, someone else
+comments or reviews, or the branch starts to conflict. Threads in a project that watch the same
+pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
 watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends
 when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8

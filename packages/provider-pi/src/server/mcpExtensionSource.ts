@@ -8,14 +8,14 @@
  * Do not import t3code modules from the string body. The Pi process resolves
  * `@earendil-works/pi-coding-agent` and `typebox` from the user's pi install.
  */
-import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
-
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 
 export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
+/** Инструкции T3 для инструментов сессии; не заданы, если инструментов нет. */
+export const T3_PI_SYSTEM_PROMPT_ENV = "T3_PI_SYSTEM_PROMPT";
 
 /**
  * Pi tools whose confirmations the bridge raises as file-change approvals.
@@ -33,7 +33,7 @@ const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
-const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
+const SYSTEM_PROMPT_ENV = ${JSON.stringify(T3_PI_SYSTEM_PROMPT_ENV)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -446,11 +446,13 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
   });
 
-  // Deliver orchestration guidance through pi's real system-prompt channel.
+  // Deliver T3's instructions through pi's real system-prompt channel.
   // Wrapping the first user message instead would stop it from starting
   // with "/" and silently break slash-command expansion.
-  pi.on("before_agent_start", (event) => ({
-    systemPrompt: event.systemPrompt + "\\n\\n" + ORCHESTRATION_INSTRUCTIONS,
-  }));
+  pi.on("before_agent_start", (event) => {
+    const instructions = env(SYSTEM_PROMPT_ENV);
+    if (instructions === undefined) return;
+    return { systemPrompt: event.systemPrompt + "\\n\\n" + instructions };
+  });
 }
 `;

@@ -39,6 +39,8 @@ import {
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { t3AgentTools } from "@t3tools/provider-core/server/mcpSession";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -91,6 +93,7 @@ export const layer: Layer.Layer<
   | IdAllocator.IdAllocatorV2
   | FileSystem.FileSystem
   | GitWorkflowService.GitWorkflowService
+  | McpProviderSessions.McpProviderSessions
   | ProjectService.ProjectService
   | ProviderAuthService.ProviderAuthService
   | ProjectionStore.ProjectionStoreV2
@@ -109,6 +112,7 @@ export const layer: Layer.Layer<
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
 
@@ -947,9 +951,14 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
+      // Сессия уже открыта, так что это T3 MCP-сессия, которая прочитает текст.
+      const threadReadAvailable = t3AgentTools(
+        yield* mcpSessions.read(projection.thread.id),
+      ).threads;
       const userText = projectComposerContextForProvider({
         text: message.text,
         records: message.context?.records ?? [],
+        threadReadAvailable,
       });
       // Delivered once: this run's provider turn marks the work as told. A
       // restart continuation is prompted by its own text or resumes natively.
@@ -1137,6 +1146,7 @@ export const layer: Layer.Layer<
               });
             }),
             alreadyDeliveredItemIds: deliveredItemIds,
+            threadReadAvailable,
             ...(session.injectHistory === undefined
               ? {}
               : {

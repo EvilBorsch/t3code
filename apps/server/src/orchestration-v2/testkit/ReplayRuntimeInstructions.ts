@@ -1,5 +1,6 @@
 import type { ProviderDriverKind, ProviderReplayTranscript } from "@t3tools/contracts";
 
+import { t3AgentTools } from "@t3tools/provider-core/server/mcpSession";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 
 /** Adds current runtime context to legacy prompt expectations, keeping outbound matching exact. */
@@ -16,7 +17,11 @@ export function materializeReplayTranscriptRuntimeInstructions(
           ? "acpRegistry"
           : undefined;
   if (harness === undefined) return transcript;
-  const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
+  // Реплеи идут без T3 MCP-сессии.
+  const instructions = buildRuntimeInstructions(
+    { harness, model: runtime.model },
+    t3AgentTools(undefined),
+  );
 
   return {
     ...transcript,

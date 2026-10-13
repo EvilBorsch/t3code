@@ -1,5 +1,6 @@
 import * as NodeAssert from "node:assert/strict";
 
+import { t3AgentTools } from "@t3tools/provider-core/server/mcpSession";
 import { describe, it } from "vite-plus/test";
 
 import {
@@ -75,7 +76,7 @@ describe("T3 browser developer instructions", () => {
 
   it("prefers the product-native preview tools in both collaboration modes", () => {
     {
-      const instructions = toolInstructions(runtime, true);
+      const instructions = toolInstructions(runtime, ["preview"]);
       NodeAssert.match(instructions, /t3-code/);
       NodeAssert.match(instructions, /preview_status/);
       NodeAssert.match(instructions, /preview_open/);
@@ -85,7 +86,7 @@ describe("T3 browser developer instructions", () => {
 
   it("omits the browser block entirely when the preview tools are not attached", () => {
     for (const mode of ["default", "plan"] as const) {
-      const instructions = toolInstructions(runtime, false);
+      const instructions = toolInstructions(runtime, []);
       NodeAssert.doesNotMatch(instructions, /preview_status/);
       NodeAssert.doesNotMatch(instructions, /preview_open/);
       NodeAssert.doesNotMatch(instructions, /T3 Code collaborative browser/);
@@ -99,17 +100,44 @@ describe("T3 browser developer instructions", () => {
   });
 
   it("tracks the turn's MCP configuration rather than defaulting to on", () => {
-    NodeAssert.match(toolInstructions(runtime, true), /preview_open/);
-    NodeAssert.doesNotMatch(toolInstructions(runtime, false), /preview_open/);
+    NodeAssert.match(toolInstructions(runtime, ["preview"]), /preview_open/);
+    NodeAssert.doesNotMatch(toolInstructions(runtime, []), /preview_open/);
+  });
+});
+
+describe("T3 context entries", () => {
+  const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
+
+  it("keeps runtime info alone for a session without T3 tools", () => {
+    const context = buildCodexAdditionalContext(runtime, t3AgentTools(undefined));
+
+    NodeAssert.deepEqual(Object.keys(context), ["t3_code_runtime"]);
+    NodeAssert.match(context.t3_code_runtime!.value, /<runtime_info>/);
+    NodeAssert.doesNotMatch(context.t3_code_runtime!.value, /link_pull_request/);
+  });
+
+  it("describes only the granted groups", () => {
+    const context = buildCodexAdditionalContext(
+      runtime,
+      t3AgentTools({ capabilities: new Set(["html", "device"]) }),
+    );
+
+    NodeAssert.match(context.t3_code_orchestration!.value, /html_render/);
+    NodeAssert.doesNotMatch(context.t3_code_orchestration!.value, /delegate_task/);
+    NodeAssert.match(context.t3_code_tools!.value, /device_list/);
+    NodeAssert.doesNotMatch(context.t3_code_tools!.value, /preview_status/);
   });
 });
 
 function runtimeInstructions(runtime: Parameters<typeof buildCodexAdditionalContext>[0]) {
-  return buildCodexAdditionalContext(runtime).t3_code_runtime!.value;
+  return buildCodexAdditionalContext(runtime, t3AgentTools(undefined)).t3_code_runtime!.value;
 }
 function toolInstructions(
   runtime: Parameters<typeof buildCodexAdditionalContext>[0],
-  available: boolean,
+  capabilities: ReadonlyArray<string>,
 ) {
-  return buildCodexAdditionalContext(runtime, available).t3_code_tools?.value ?? "";
+  return (
+    buildCodexAdditionalContext(runtime, t3AgentTools({ capabilities: new Set(capabilities) }))
+      .t3_code_tools?.value ?? ""
+  );
 }

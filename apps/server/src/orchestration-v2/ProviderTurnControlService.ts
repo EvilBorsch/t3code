@@ -16,6 +16,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { t3AgentTools } from "@t3tools/provider-core/server/mcpSession";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -84,12 +86,15 @@ export class ProviderTurnControlServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnControlServiceV2,
   never,
-  ProjectionStore.ProjectionStoreV2 | ProviderSessionManager.ProviderSessionManagerV2
+  | McpProviderSessions.McpProviderSessions
+  | ProjectionStore.ProjectionStoreV2
+  | ProviderSessionManager.ProviderSessionManagerV2
 > = Layer.effect(
   ProviderTurnControlServiceV2,
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
 
     const load = (input: {
       readonly threadId: ThreadId;
@@ -363,6 +368,8 @@ export const layer: Layer.Layer<
                 text: projectComposerContextForProvider({
                   text: message.text,
                   records: message.context?.records ?? [],
+                  threadReadAvailable: t3AgentTools(yield* mcpSessions.read(input.threadId))
+                    .threads,
                 }),
                 attachments: message.attachments,
                 createdBy: message.createdBy,

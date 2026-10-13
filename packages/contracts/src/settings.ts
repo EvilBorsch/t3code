@@ -972,6 +972,9 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "defaultProjectScripts",
   "enableAgentBrowserAccess",
   "enableAgentDeviceAccess",
+  "enableAgentVisualReplies",
+  "enableAgentThreadTools",
+  "enableAgentPullRequestTools",
   "textGenerationModelSelection",
   "sourceControlWriterModelSelection",
   "reviewGuideModelSelection",
@@ -1019,6 +1022,9 @@ export const ProjectSettingsOverrides = Schema.Struct({
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
+  enableAgentVisualReplies: Schema.optionalKey(Schema.Boolean),
+  enableAgentThreadTools: Schema.optionalKey(Schema.Boolean),
+  enableAgentPullRequestTools: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
@@ -1131,10 +1137,9 @@ export const ServerSettings = Schema.Struct({
   ),
   /**
    * Whether agents may drive the in-app preview browser. Turning this off
-   * withholds the MCP credential, so the `t3-code` server (and with it every
-   * `preview_*` tool) is never attached to a provider session, and the prompt
-   * text describing those tools is dropped along with them. The user's own
-   * browser panel is unaffected — this gates agent access only.
+   * withholds the `preview` capability from the MCP credential, so every
+   * `preview_*` tool rejects and the prompt text describing them is dropped.
+   * The user's own browser panel is unaffected — this gates agent access only.
    *
    * Server-authoritative rather than client-local: tool injection and prompt
    * construction both happen on the server, and the answer must not differ
@@ -1184,6 +1189,19 @@ export const ServerSettings = Schema.Struct({
    * unaffected.
    */
   enableAgentDeviceAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Группы инструментов агента на MCP-сервере `t3-code`; применяются при
+   * подготовке сессии провайдера, как доступ к браузеру и устройствам. Visual
+   * replies — `html_preview`/`html_render`; thread tools — оркестрация, треды,
+   * проекты, вложения и worktree; pull request tools связывают PR с тредом и
+   * следят за ними. Каждая группа включает и свой текст в промпте. Когда все
+   * группы выключены, сервер не подключается и агент получает только `runtime_info`.
+   */
+  enableAgentVisualReplies: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  enableAgentThreadTools: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  enableAgentPullRequestTools: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   /**
    * Whether this server may install and run T3's device helper processes.
    * Kept separate from agent access so enabling the user's Device panel does
@@ -1568,6 +1586,9 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(ProjectSettingsOverrides)),
   ),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
+  enableAgentVisualReplies: Schema.optionalKey(Schema.Boolean),
+  enableAgentThreadTools: Schema.optionalKey(Schema.Boolean),
+  enableAgentPullRequestTools: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),

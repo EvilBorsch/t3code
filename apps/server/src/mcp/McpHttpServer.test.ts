@@ -26,9 +26,28 @@ import {
   HttpServerResponse,
 } from "effect/http";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as DeviceService from "../device/DeviceService.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
+import * as PreviewManager from "../preview/Manager.ts";
+import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
@@ -1094,4 +1113,159 @@ it.effect("admits provider and OAuth client credentials and points only clients 
       expect(deadProvider.headers["www-authenticate"]).toBe('Bearer error="invalid_token"');
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+/** Все toolkit, которые обслуживает `/mcp`, с credential из настоящего реестра. */
+const layerAllToolkits = McpHttpServer.layer.pipe(
+  Layer.provide(McpSessionRegistry.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getEnvironmentId: Effect.succeed(environmentId),
+      }),
+      PreviewAutomationBroker.layer,
+      PreviewBrowser.layer,
+      Layer.mock(Orchestrator.OrchestratorV2)({}),
+      Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+      Layer.mock(DeviceService.DeviceService)({}),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+      Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+      Layer.mock(ProjectService.ProjectService)({}),
+      Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
+      ServerSettings.layerTest({}),
+      Layer.mock(GitWorkflowService.GitWorkflowService)({}),
+      Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
+      Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+      Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+      Layer.mock(PreviewManager.PreviewManager)({}),
+      Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+      Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ThreadSearch.ThreadSearch)({}),
+    ),
+  ),
+);
+
+const decodeJsonRpcResponse = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      result: Schema.optional(
+        Schema.Struct({ tools: Schema.Array(Schema.Struct({ name: Schema.String })) }),
+      ),
+      error: Schema.optional(Schema.Struct({ code: Schema.Number, message: Schema.String })),
+    }),
+  ),
+);
+
+/**
+ * Поднимает все toolkit, открывает MCP-сессию от имени треда с credential,
+ * выдающим `capabilities`, и возвращает функцию отправки одного JSON-RPC запроса.
+ */
+const openThreadSession = (capabilities: ReadonlySet<McpInvocationContext.McpCapability>) =>
+  Effect.gen(function* () {
+    yield* HttpRouter.serve(layerAllToolkits, { disableListenLog: true, disableLogger: true }).pipe(
+      Layer.build,
+    );
+    const credential = yield* McpSessionRegistry.issueActiveMcpCredential({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities,
+    });
+    const httpClient = yield* HttpClient.HttpClient;
+    const headers = {
+      accept: "application/json, text/event-stream",
+      authorization: credential!.config.authorizationHeader,
+    };
+    const initialize = yield* httpClient.post("/mcp", {
+      headers,
+      body: HttpBody.text(
+        `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"mcp-test","version":"1.0.0"}}}`,
+        "application/json",
+      ),
+    });
+    const sessionHeaders = {
+      ...headers,
+      "mcp-session-id": initialize.headers["mcp-session-id"]!,
+      "mcp-protocol-version": "2025-06-18",
+    };
+    return (method: string, params: Record<string, unknown>) =>
+      httpClient
+        .post("/mcp", {
+          headers: sessionHeaders,
+          body: HttpBody.text(
+            JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }),
+            "application/json",
+          ),
+        })
+        .pipe(
+          Effect.tap((response) => Effect.sync(() => expect(response.status).toBe(200))),
+          Effect.flatMap((response) => response.text),
+          Effect.flatMap(decodeJsonRpcResponse),
+        );
+  });
+
+const layerAllToolkitsTest = Layer.mergeAll(
+  NodeHttpServer.layerTest,
+  ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-capabilities-" }).pipe(
+    Layer.provide(NodeServices.layer),
+  ),
+  NodeServices.layer,
+);
+
+it.effect("shows and runs only visual reply tools for a visual-replies credential", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const send = yield* openThreadSession(new Set(["html"]));
+
+      const listed = yield* send("tools/list", {});
+      expect(listed.result?.tools.map((tool) => tool.name).sort()).toEqual([
+        "html_preview",
+        "html_render",
+      ]);
+
+      // delegate_task зарегистрирован, так что "not found" может ответить только
+      // фильтр capabilities; иначе обработчик дошёл бы до заглушки оркестратора.
+      const called = yield* send("tools/call", {
+        name: "delegate_task",
+        arguments: { prompt: "hello" },
+      });
+      expect(called.error?.code).toBe(-32602);
+      expect(called.error?.message).toContain("not found");
+    }),
+  ).pipe(Effect.provide(layerAllToolkitsTest)),
+);
+
+it.effect("hides device tools from a thread credential without device access", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const send = yield* openThreadSession(
+        new Set(["html", "orchestration", "worktree", "pull-requests", "preview"]),
+      );
+      const names = (yield* send("tools/list", {})).result?.tools.map((tool) => tool.name) ?? [];
+      expect(names).toEqual(
+        expect.arrayContaining(["delegate_task", "preview_status", "html_render"]),
+      );
+      expect(names.filter((name) => name.startsWith("device_"))).toEqual([]);
+    }),
+  ).pipe(Effect.provide(layerAllToolkitsTest)),
+);
+
+it.effect("assigns every tool on /mcp a capability", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const send = yield* openThreadSession(
+        new Set(["html", "orchestration", "worktree", "pull-requests", "preview", "device"]),
+      );
+      const listed = (yield* send("tools/list", {})).result?.tools.map((tool) => tool.name) ?? [];
+      const assigned = new Set(
+        McpHttpServer.toolkitCapabilities.flatMap(([, toolkit]) => Object.keys(toolkit.tools)),
+      );
+      expect(listed.length).toBeGreaterThan(0);
+      expect(listed.filter((name) => !assigned.has(name))).toEqual([]);
+    }),
+  ).pipe(Effect.provide(layerAllToolkitsTest)),
 );

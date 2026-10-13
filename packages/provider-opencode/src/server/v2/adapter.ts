@@ -75,6 +75,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
@@ -3412,9 +3413,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
         if (added) state.mcp = wanted;
       }
+      const t3Tools = McpProviderSession.t3AgentTools(
+        state.mcp === undefined ? undefined : mcpSession,
+      );
       const instructions = [
-        buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
-        t3OrchestrationSystemPrompt(state.mcp !== undefined),
+        buildRuntimeInstructions(
+          { harness: "OpenCode", model: turnInput.modelSelection.model },
+          t3Tools,
+        ),
+        t3OrchestrationSystemPrompt(t3Tools),
       ]
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");

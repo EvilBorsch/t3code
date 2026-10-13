@@ -58,7 +58,13 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "branchNamePrefix",
     "branchNameInstructions",
   ],
-  "agent-behavior": ["responseStreamingMode", "enableAgentBrowserAccess"],
+  "agent-behavior": [
+    "responseStreamingMode",
+    "enableAgentBrowserAccess",
+    "enableAgentVisualReplies",
+    "enableAgentThreadTools",
+    "enableAgentPullRequestTools",
+  ],
   maintenance: ["continueThreadsAfterServerUpdate"],
 };
 
@@ -422,6 +428,36 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       disabled={disabledFor("enableAgentBrowserAccess")}
                       onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
                     />
+                  </SettingsSection>
+                  <SettingsSection title="Agent tools">
+                    <SettingsSwitchRow
+                      icon="chart.bar.xaxis"
+                      label="Agent visual replies"
+                      subtitle="Let agents answer with HTML pages: charts, tables, diagrams, mockups."
+                      value={uniform("enableAgentVisualReplies")}
+                      disabled={disabledFor("enableAgentVisualReplies")}
+                      onValueChange={(value) => write({ enableAgentVisualReplies: value })}
+                    />
+                    <View className="border-t border-border-subtle">
+                      <SettingsSwitchRow
+                        icon="bubble.left.and.bubble.right"
+                        label="Agent thread tools"
+                        subtitle="Let agents delegate to other models, start and read threads, schedule tasks and manage worktrees."
+                        value={uniform("enableAgentThreadTools")}
+                        disabled={disabledFor("enableAgentThreadTools")}
+                        onValueChange={(value) => write({ enableAgentThreadTools: value })}
+                      />
+                    </View>
+                    <View className="border-t border-border-subtle">
+                      <SettingsSwitchRow
+                        icon="arrow.triangle.pull"
+                        label="Agent pull request tools"
+                        subtitle="Let agents link pull requests to the thread and watch them for checks and reviews."
+                        value={uniform("enableAgentPullRequestTools")}
+                        disabled={disabledFor("enableAgentPullRequestTools")}
+                        onValueChange={(value) => write({ enableAgentPullRequestTools: value })}
+                      />
+                    </View>
                   </SettingsSection>
                 </>
               ) : null}

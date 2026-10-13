@@ -657,6 +657,16 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess
         ? ["Agent browser access"]
         : []),
+      ...(settings.enableAgentVisualReplies !== DEFAULT_UNIFIED_SETTINGS.enableAgentVisualReplies
+        ? ["Agent visual replies"]
+        : []),
+      ...(settings.enableAgentThreadTools !== DEFAULT_UNIFIED_SETTINGS.enableAgentThreadTools
+        ? ["Agent thread tools"]
+        : []),
+      ...(settings.enableAgentPullRequestTools !==
+      DEFAULT_UNIFIED_SETTINGS.enableAgentPullRequestTools
+        ? ["Agent pull request tools"]
+        : []),
     ],
     [
       isTextGenerationModelDirty,
@@ -673,6 +683,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffColorScheme,
       settings.chatWidth,
       settings.enableAgentBrowserAccess,
+      settings.enableAgentVisualReplies,
+      settings.enableAgentThreadTools,
+      settings.enableAgentPullRequestTools,
       settings.confirmQuit,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
@@ -848,6 +861,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       // name, so a user restoring defaults is told the agent regains access
       // rather than discovering it later.
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
+      enableAgentVisualReplies: DEFAULT_UNIFIED_SETTINGS.enableAgentVisualReplies,
+      enableAgentThreadTools: DEFAULT_UNIFIED_SETTINGS.enableAgentThreadTools,
+      enableAgentPullRequestTools: DEFAULT_UNIFIED_SETTINGS.enableAgentPullRequestTools,
     });
     onRestored?.();
   }, [

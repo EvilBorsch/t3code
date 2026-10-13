@@ -42,6 +42,7 @@ import { runOrchestratorV2Scenario } from "../src/orchestration-v2/testkit/Orche
 import * as ProviderReplayHarness from "../src/orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { makeGrokAcpRuntime } from "@t3tools/provider-grok/testing";
+import { t3AgentTools } from "@t3tools/provider-core/server/mcpSession";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 
 const wallClock = Clock.Clock.defaultValue();
@@ -564,10 +565,11 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
         workspace: realWorkspace,
         home: process.env.HOME ?? "",
         user: process.env.USER ?? "",
-        runtimeInstructions: buildRuntimeInstructions({
-          harness: "Grok",
-          model: variant.modelSelection.model,
-        }),
+        // Запись фикстуры идёт без T3 MCP-сессии.
+        runtimeInstructions: buildRuntimeInstructions(
+          { harness: "Grok", model: variant.modelSelection.model },
+          t3AgentTools(undefined),
+        ),
       }),
       { type: "runtime_exit", status: closedCleanly ? "success" : "cancelled" } as const,
     ],

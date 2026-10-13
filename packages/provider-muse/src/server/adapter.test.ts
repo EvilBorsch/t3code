@@ -360,7 +360,7 @@ describe("MuseAdapterV2", () => {
         providerInstanceId: INSTANCE_ID,
         endpoint: "http://127.0.0.1:43210/mcp",
         authorizationHeader: "Bearer thread-scoped-test-token",
-        browserToolsAvailable: true,
+        capabilities: new Set(["orchestration", "worktree", "pull-requests", "html", "preview"]),
       });
       for (const nativeId of [undefined, "saved-native-session"]) {
         const fake = yield* makeFakeMuse();
@@ -381,6 +381,37 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("asks for PR linking only when the session has the pull request tools", () =>
+    Effect.gen(function* () {
+      for (const [capabilities, linksPullRequests] of [
+        [["html"], false],
+        [["orchestration", "worktree", "pull-requests", "html"], true],
+      ] as const) {
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("test-environment"),
+          threadId: THREAD_ID,
+          providerSessionId: "test-session",
+          providerInstanceId: INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43210/mcp",
+          authorizationHeader: "Bearer thread-scoped-test-token",
+          capabilities: new Set(capabilities),
+        });
+        const fake = yield* makeFakeMuse();
+        fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
+        const harness = yield* makeHarness(fake);
+        yield* harness.runtime.startTurn(
+          yield* turnInput(harness.providerThread, 1, harness.policy),
+        );
+        const call = yield* fake.takeCall("turn/start");
+        const runtimeText = String(
+          (call.params.input as ReadonlyArray<{ readonly text?: string }>)[0]?.text,
+        );
+        assert.include(runtimeText, "<runtime_info>");
+        assert.strictEqual(runtimeText.includes("link_pull_request"), linksPullRequests);
+      }
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("rejects a host without session MCP support before opening a native session", () =>
     Effect.gen(function* () {
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
@@ -390,7 +421,7 @@ describe("MuseAdapterV2", () => {
         providerInstanceId: INSTANCE_ID,
         endpoint: "http://127.0.0.1:43210/mcp",
         authorizationHeader: "Bearer thread-scoped-test-token",
-        browserToolsAvailable: false,
+        capabilities: new Set(["orchestration", "worktree", "pull-requests", "html"]),
       });
       const fake = yield* makeFakeMuse();
       const outcome = yield* makeHarness(fake).pipe(Effect.result);

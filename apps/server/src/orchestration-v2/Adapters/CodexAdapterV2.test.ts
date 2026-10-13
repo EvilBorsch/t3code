@@ -54,6 +54,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -392,6 +393,18 @@ describe("CodexAdapterV2 assistant message streaming", () => {
   );
 });
 
+const codexMcpSession = (
+  capabilities: ReadonlyArray<string>,
+): McpProviderSession.McpProviderSessionConfig => ({
+  environmentId: EnvironmentId.make("environment-codex-tools"),
+  threadId: ThreadId.make("thread-codex-tools"),
+  providerSessionId: "mcp-session-codex-tools",
+  providerInstanceId: ProviderInstanceId.make("codex"),
+  endpoint: "http://127.0.0.1:43123/mcp",
+  authorizationHeader: "Bearer codex-tools",
+  capabilities: new Set(capabilities),
+});
+
 describe("CodexAdapterV2 runtime policy", () => {
   it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
     Effect.gen(function* () {
@@ -469,8 +482,9 @@ describe("CodexAdapterV2 runtime policy", () => {
         modelSelection,
         appContext,
       });
-      assert.deepEqual(alone.additionalContext, {
-        "mcp_app_todos_list_todos_item-1": { kind: "untrusted", value: "Filtered to overdue" },
+      assert.deepEqual(alone.additionalContext?.["mcp_app_todos_list_todos_item-1"], {
+        kind: "untrusted",
+        value: "Filtered to overdue",
       });
       // Alongside T3's own context, both are kept.
       const withT3 = yield* CodexAdapterV2.buildCodexTurnStartParams({
@@ -478,7 +492,7 @@ describe("CodexAdapterV2 runtime policy", () => {
         codexInput: [{ type: "text", text: "what's on my list?" }],
         runtimePolicy: policy,
         modelSelection,
-        hasT3Mcp: true,
+        mcpSession: codexMcpSession(["orchestration", "worktree", "pull-requests", "html"]),
         appContext,
       });
       assert.deepEqual(withT3.additionalContext?.["mcp_app_todos_list_todos_item-1"], {
@@ -503,7 +517,7 @@ describe("CodexAdapterV2 runtime policy", () => {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
         },
-        hasT3Mcp: true,
+        mcpSession: codexMcpSession(["orchestration", "worktree", "pull-requests", "html"]),
       });
 
       assert.equal(params.collaborationMode?.mode, "default");
@@ -532,10 +546,50 @@ describe("CodexAdapterV2 runtime policy", () => {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
         },
-        hasT3Mcp: false,
       });
 
       assert.isUndefined(params.collaborationMode);
+    }),
+  );
+
+  it.effect("keeps runtime info but no T3 tool text without the T3 MCP server", () =>
+    Effect.gen(function* () {
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        nativeThreadId: "native-runtime-without-t3-mcp",
+        codexInput: [{ type: "text", text: "implement this task" }],
+        runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      });
+
+      assert.include(params.additionalContext?.t3_code_runtime?.value ?? "", "<runtime_info>");
+      assert.notInclude(
+        params.additionalContext?.t3_code_runtime?.value ?? "",
+        "link_pull_request",
+      );
+      assert.notProperty(params.additionalContext, "t3_code_orchestration");
+      assert.notProperty(params.additionalContext, "t3_code_tools");
+    }),
+  );
+
+  it.effect("describes visual replies and the browser for an html and preview session", () =>
+    Effect.gen(function* () {
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        nativeThreadId: "native-visuals-and-browser",
+        codexInput: [{ type: "text", text: "chart this" }],
+        runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        mcpSession: codexMcpSession(["html", "preview"]),
+      });
+
+      const orchestration = params.additionalContext?.t3_code_orchestration?.value ?? "";
+      assert.include(orchestration, "html_render");
+      assert.notInclude(orchestration, "delegate_task");
+      assert.include(params.additionalContext?.t3_code_tools?.value ?? "", "preview_status");
+      assert.notInclude(params.additionalContext?.t3_code_tools?.value ?? "", "device_list");
+      assert.notInclude(
+        params.additionalContext?.t3_code_runtime?.value ?? "",
+        "link_pull_request",
+      );
     }),
   );
 
@@ -553,7 +607,13 @@ describe("CodexAdapterV2 runtime policy", () => {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
         },
-        hasT3Mcp: true,
+        mcpSession: codexMcpSession([
+          "orchestration",
+          "worktree",
+          "pull-requests",
+          "html",
+          "preview",
+        ]),
       });
 
       assert.equal(params.collaborationMode?.mode, "plan");
@@ -579,7 +639,6 @@ describe("CodexAdapterV2 runtime policy", () => {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
         },
-        hasT3Mcp: false,
       });
 
       assert.equal(params.collaborationMode?.mode, "plan");
@@ -646,7 +705,7 @@ describe("CodexAdapterV2 process spawning", () => {
       providerInstanceId: ProviderInstanceId.make("codex"),
       endpoint: "http://127.0.0.1:43123/mcp",
       authorizationHeader: "Bearer secret-codex-token",
-      browserToolsAvailable: true,
+      capabilities: new Set(["orchestration", "worktree", "pull-requests", "html", "preview"]),
     };
 
     assert.deepEqual(
@@ -2791,7 +2850,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           codexInput: [{ type: "text", text: "work" }],
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           modelSelection: CODEX_TEST_MODEL_SELECTION,
-          hasT3Mcp: true,
+          mcpSession: codexMcpSession([
+            "orchestration",
+            "worktree",
+            "pull-requests",
+            "html",
+            "preview",
+          ]),
         });
         assert.include(
           params.additionalContext?.t3_code_orchestration?.value ?? "",
@@ -2858,7 +2923,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           providerInstanceId: ProviderInstanceId.make("codex"),
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer test",
-          browserToolsAvailable: true,
+          capabilities: new Set(["orchestration", "worktree", "pull-requests", "html", "preview"]),
         });
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({

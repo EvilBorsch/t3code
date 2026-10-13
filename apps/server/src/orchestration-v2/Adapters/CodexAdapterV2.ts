@@ -719,9 +719,8 @@ export function buildCodexTurnStartParams(input: {
   readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly modelSelection: ModelSelection;
-  readonly hasT3Mcp?: boolean;
-  readonly browserToolsAvailable?: boolean;
-  readonly deviceToolsAvailable?: boolean;
+  /** MCP-сессия `t3-code` треда; инструкции T3 описывают только её инструменты. */
+  readonly mcpSession?: McpProviderSession.McpProviderSessionConfig | undefined;
   /** ChatGPT token sharing does not accept service tiers. */
   readonly omitServiceTier?: boolean;
   /** What the thread's MCP Apps want the agent to know (`ui/update-model-context`). */
@@ -748,7 +747,7 @@ export function buildCodexTurnStartParams(input: {
         ? undefined
         : getCodexServiceTierOptionValue(input.modelSelection);
     const developerInstructions =
-      input.hasT3Mcp !== true
+      input.mcpSession === undefined
         ? undefined
         : buildCodexDeveloperInstructions(input.runtimePolicy.interactionMode);
     // An app's context is text an MCP server wrote, so it goes in as untrusted
@@ -760,20 +759,13 @@ export function buildCodexTurnStartParams(input: {
         { kind: "untrusted" as const, value: entry.text },
       ]),
     );
-    const t3Context =
-      input.hasT3Mcp === true
-        ? buildCodexAdditionalContext(
-            { model: input.modelSelection.model, reasoningEffort: effort ?? "medium" },
-            {
-              browser: input.browserToolsAvailable ?? true,
-              device: input.deviceToolsAvailable ?? false,
-            },
-          )
-        : undefined;
-    const additionalContext =
-      t3Context === undefined && Object.keys(appContext).length === 0
-        ? undefined
-        : { ...t3Context, ...appContext };
+    const additionalContext = {
+      ...buildCodexAdditionalContext(
+        { model: input.modelSelection.model, reasoningEffort: effort ?? "medium" },
+        McpProviderSession.t3AgentTools(input.mcpSession),
+      ),
+      ...appContext,
+    };
     const collaborationMode: CodexSchema.ClientRequest__CollaborationMode | undefined =
       input.runtimePolicy.interactionMode !== "plan" && developerInstructions === undefined
         ? undefined
@@ -791,7 +783,7 @@ export function buildCodexTurnStartParams(input: {
     return yield* decodeCodexTurnStartParamsWithCollaborationMode({
       threadId: input.nativeThreadId,
       input: input.codexInput,
-      ...(additionalContext ? { additionalContext } : {}),
+      additionalContext,
       cwd: input.runtimePolicy.cwd,
       model: input.modelSelection.model,
       // Model catalogues can default summaries to "none". Request them on every
@@ -6238,9 +6230,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               codexInput,
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
-              hasT3Mcp: mcpSession !== undefined,
-              browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
-              deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
+              mcpSession,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
             });

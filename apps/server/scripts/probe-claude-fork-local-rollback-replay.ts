@@ -15,6 +15,7 @@ import {
   makeClaudeUserMessage,
   type ClaudeAgentSdkQueryOptions,
 } from "../src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { t3AgentTools } from "@t3tools/provider-core/server/mcpSession";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { makeCheckpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
@@ -141,6 +142,7 @@ function queryOptions(input: {
 }): ClaudeAgentSdkQueryOptions {
   return {
     ...makeClaudeQueryOptions({
+      t3Tools: t3AgentTools(undefined),
       modelSelection: MODEL_SELECTION,
       cwd: input.cwd,
       nativeThreadId: input.nativeThreadId,

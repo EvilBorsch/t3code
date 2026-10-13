@@ -673,6 +673,8 @@ function negotiatedCapabilities(
 }
 
 interface AcpMcpContext {
+  /** T3-инструменты подключённого сервера `t3-code`; текст промпта описывает только их. */
+  readonly tools: McpProviderSession.T3AgentTools;
   readonly servers: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly acpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly processEnvironment?: NodeJS.ProcessEnv;
@@ -685,7 +687,7 @@ function acpMcpContext(
   self: SelfInvocation,
 ): AcpMcpContext {
   if (session === undefined) {
-    return { servers: [], acpServers: [] };
+    return { tools: McpProviderSession.t3AgentTools(undefined), servers: [], acpServers: [] };
   }
   // Stdio is ACP's required baseline MCP transport. Agents that advertise
   // optional http support still routinely fail to wire injected http servers
@@ -694,6 +696,7 @@ function acpMcpContext(
   // forwards JSON-RPC to T3's authenticated MCP endpoint. The credential
   // travels via environment variables, never the command line.
   return {
+    tools: McpProviderSession.t3AgentTools(session),
     servers: [
       {
         name: "t3-code",
@@ -6789,7 +6792,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const prompt: Array<EffectAcpSchema.ContentBlock> = [];
           const instructionState = {
             interactionMode: turnInput.runtimePolicy.interactionMode,
-            hasT3Mcp: (yield* readMcpContext(turnInput.threadId)).servers.length > 0,
+            tools: (yield* readMcpContext(turnInput.threadId)).tools,
           } satisfies T3AcpInstructionState;
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
           const messageText = providerMessageTextWithAttachmentPaths({
@@ -6848,10 +6851,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           prompt.push({
             type: "text",
-            text: buildRuntimeInstructions({
-              harness: flavor.runtimeHarness ?? driver,
-              model: turnInput.modelSelection.model,
-            }),
+            text: buildRuntimeInstructions(
+              {
+                harness: flavor.runtimeHarness ?? driver,
+                model: turnInput.modelSelection.model,
+              },
+              instructionState.tools,
+            ),
           });
           return { prompt, instructionState: text === messageText ? undefined : instructionState };
         });

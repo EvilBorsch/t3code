@@ -114,7 +114,7 @@ const layerMcpRegistry = Layer.succeed(
           providerInstanceId,
           endpoint: MCP_URL,
           authorizationHeader: `Bearer mcp-live:${threadId}`,
-          browserToolsAvailable: false,
+          capabilities: new Set(["orchestration", "worktree", "pull-requests", "html"]),
         },
       }),
     resolve: () => Effect.succeed(undefined),

@@ -232,6 +232,9 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
     const tokenCap = yield* handoffTokenCapConfig.pipe(
       Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
     );
+    // Handoff записывается до появления принимающей сессии, поэтому coverage
+    // всегда называет t3_thread_read; доставка убирает его для сессии без
+    // инструментов тредов.
 
     const prepareLegacyImport = Effect.fn("orchestrationV2.contextHandoff.prepareLegacyImport")(
       function* (input: {

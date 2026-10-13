@@ -693,6 +693,31 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow disable enable open drive preview tools sessions project override"],
   },
   {
+    id: "agent-visual-replies",
+    title: "Agent visual replies",
+    to: "/settings/integrations",
+    scope: "project-defaults",
+    searchTerms: [
+      "allow disable enable html visual pages charts tables diagrams mockups mcp tools project override",
+    ],
+  },
+  {
+    id: "agent-thread-tools",
+    title: "Agent thread tools",
+    to: "/settings/integrations",
+    scope: "project-defaults",
+    searchTerms: [
+      "allow disable enable delegate subagent orchestration models threads scheduled tasks worktree mcp tools project override",
+    ],
+  },
+  {
+    id: "agent-pull-request-tools",
+    title: "Agent pull request tools",
+    to: "/settings/integrations",
+    scope: "project-defaults",
+    searchTerms: ["allow disable enable pr link watch checks reviews mcp tools project override"],
+  },
+  {
     id: "device-hosts",
     title: "Device hosts",
     to: "/settings/integrations",

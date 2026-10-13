@@ -1,5 +1,7 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 
+import type { T3AgentTools } from "./mcpSession.ts";
+
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 
 ## T3 Code orchestration
@@ -30,8 +32,11 @@ For stacked work, set \`baseRef\` to the intended parent branch and \`startFromO
 Tool names may include a harness-normalized MCP prefix, such as \`mcp__t3_code__delegate_task\`; the semantics are the same. Some harnesses attach optional MCP servers lazily: if an initial tool-catalog scan does not show T3 tools, do not conclude that cross-provider delegation is unavailable. Make one bounded direct attempt using the known T3 tool name on the next tool step. In Codex code mode, for example, call \`tools.mcp__t3_code__orchestrator_capabilities({})\` before reporting that the capability is absent. Keep polling/wait loops bounded, do not duplicate active work, and use stable \`clientRequestId\` values when retrying tools that accept them.
 
 ACP fallback: some ACP agents accept the injected MCP server but fail to expose its tools. When the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call the same tools through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset when T3 runs as a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. This is the supported T3 transport fallback, not an ordinary shell-based substitute for delegation.
+`;
 
-### Showing visuals
+export const T3_CODE_VISUAL_REPLY_INSTRUCTIONS = `
+
+## T3 Code visual replies
 
 When a chart, table, diagram, image collage, or mockup would say more than prose, build a self-contained HTML page, check it with \`html_preview\`, then publish it with \`html_render\` before your final reply. The reader sees the page above that reply, so don't announce or restate it; add only what it doesn't say.
 `;
@@ -62,7 +67,7 @@ Investigate with read-only actions and do not edit files or otherwise execute th
 
 export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
-  readonly hasT3Mcp: boolean;
+  readonly tools: T3AgentTools;
 }
 
 /**
@@ -76,19 +81,23 @@ export function t3AcpPromptWithInstructions(input: {
 }): string {
   // Native slash commands must remain at the start of the prompt.
   if (input.prompt.trimStart().startsWith("/")) return input.prompt;
+  const { interactionMode, tools } = input.state;
+  const previous = input.previousState;
   if (
-    input.previousState?.interactionMode === input.state.interactionMode &&
-    input.previousState.hasT3Mcp === input.state.hasT3Mcp
+    previous?.interactionMode === interactionMode &&
+    (Object.keys(tools) as Array<keyof T3AgentTools>).every(
+      (group) => previous.tools[group] === tools[group],
+    )
   ) {
     return input.prompt;
   }
+  const systemPrompt = t3OrchestrationSystemPrompt(tools);
   const instructions = [
-    input.state.interactionMode === "plan"
+    interactionMode === "plan"
       ? T3_CODE_ACP_PLAN_MODE_INSTRUCTIONS
       : T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS,
-    ...(input.state.hasT3Mcp
-      ? [T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(), T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim()]
-      : []),
+    ...(tools.browser ? [T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()] : []),
+    ...(systemPrompt === undefined ? [] : [systemPrompt.trim()]),
   ];
   return `<t3_code_instructions>\n${instructions.join("\n\n")}\n</t3_code_instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;
 }
@@ -98,20 +107,23 @@ export function t3AcpPromptWithInstructions(input: {
  * context in the first prompt. Keep the wrapper explicit so it cannot be
  * mistaken for text authored by the user.
  */
-function prependT3OrchestrationInstructions(prompt: string): string {
-  return `<t3_code_orchestration_instructions>${T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim()}</t3_code_orchestration_instructions>\n\n<user_request>\n${prompt}\n</user_request>`;
-}
-
 export function t3OrchestrationPromptForFirstRun(input: {
   readonly prompt: string;
   readonly runOrdinal: number;
-  readonly hasT3Mcp: boolean;
+  readonly tools: T3AgentTools;
 }): string {
-  return input.runOrdinal === 1 && input.hasT3Mcp
-    ? prependT3OrchestrationInstructions(input.prompt)
-    : input.prompt;
+  const systemPrompt =
+    input.runOrdinal === 1 ? t3OrchestrationSystemPrompt(input.tools) : undefined;
+  return systemPrompt === undefined
+    ? input.prompt
+    : `<t3_code_orchestration_instructions>${systemPrompt.trim()}</t3_code_orchestration_instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;
 }
 
-export function t3OrchestrationSystemPrompt(hasT3Mcp: boolean): string | undefined {
-  return hasT3Mcp ? T3_CODE_ORCHESTRATION_INSTRUCTIONS : undefined;
+/** Текст T3 для инструментов сессии; undefined, если ни одного из них нет. */
+export function t3OrchestrationSystemPrompt(tools: T3AgentTools): string | undefined {
+  const text = [
+    tools.threads ? T3_CODE_ORCHESTRATION_INSTRUCTIONS : "",
+    tools.visualReplies ? T3_CODE_VISUAL_REPLY_INSTRUCTIONS : "",
+  ].join("");
+  return text.length === 0 ? undefined : text;
 }

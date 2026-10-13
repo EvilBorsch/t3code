@@ -74,6 +74,7 @@ import { attachmentRelativePath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools.ts";
 import { HtmlToolkit } from "../../mcp/toolkits/html/tools.ts";
 import { EnvironmentToolkit } from "../../mcp/toolkits/environment/tools.ts";
@@ -217,6 +218,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       nativeThreadId: "thinking-thread",
       resume,
       cwd: "/workspace",
+      t3Tools: McpProviderSession.t3AgentTools(undefined),
     });
     assert.deepEqual(options.thinking, { type: "adaptive", display: "summarized" });
     assert.equal(options.extraArgs?.["thinking-display"], "summarized");
@@ -229,6 +231,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       nativeThreadId: "thinking-thread",
       resume: false,
       cwd: "/workspace",
+      t3Tools: McpProviderSession.t3AgentTools(undefined),
       settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs: "--thinking-display omitted" },
     });
     assert.isUndefined(options.thinking);
@@ -246,6 +249,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       nativeThreadId: "thinking-thread",
       resume: false,
       cwd: "/workspace",
+      t3Tools: McpProviderSession.t3AgentTools(undefined),
     });
     assert.isUndefined(options.thinking);
     assert.isUndefined(options.extraArgs?.["thinking-display"]);
@@ -262,6 +266,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       nativeThreadId: "native-permission-override",
       resume: false,
       cwd: "/workspace",
+      t3Tools: McpProviderSession.t3AgentTools(undefined),
       permissionMode: "default",
       settings: { ...AUTO_COMPACT_CLAUDE_SETTINGS, launchArgs },
     });
@@ -280,6 +285,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       nativeThreadId: "native-thread-auto-compact",
       resume: true,
       cwd: "/workspace",
+      t3Tools: McpProviderSession.t3AgentTools(undefined),
       settings: AUTO_COMPACT_CLAUDE_SETTINGS,
       onUserDialog,
       supportedDialogKinds: ["resume_return"],
@@ -545,7 +551,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     providerInstanceId: ProviderInstanceId.make("claudeAgent"),
     endpoint: "http://127.0.0.1:43123/mcp",
     authorizationHeader,
-    browserToolsAvailable: true,
+    capabilities: new Set(["orchestration", "worktree", "pull-requests", "html", "preview"]),
   });
 
   it("leaves an absent allowlist absent when no MCP session exists", () => {
@@ -705,6 +711,114 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
   });
 });
 
+describe("ClaudeAdapterV2 T3 instructions", () => {
+  const openedQueryOptions = (capabilities: ReadonlySet<string> | undefined) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const threadId = ThreadId.make("thread-claude-t3-tools");
+        if (capabilities !== undefined) {
+          yield* (yield* McpProviderSessions.McpProviderSessions).set({
+            environmentId: EnvironmentId.make("environment-claude-t3-tools"),
+            threadId,
+            providerSessionId: "mcp-session-claude-t3-tools",
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            endpoint: "http://127.0.0.1:43123/mcp",
+            authorizationHeader: "Bearer claude-t3-tools",
+            capabilities,
+          });
+        }
+        let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-t3-tools-",
+          }),
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-t3-tools"),
+            open: (input) =>
+              Effect.sync(() => {
+                openedOptions = input.options;
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-t3-tools"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-t3-tools"),
+            text: "show me a chart",
+            attachments: [],
+          }),
+        );
+        assert.isDefined(openedOptions);
+        const systemPrompt = openedOptions.systemPrompt as { readonly append?: string };
+        return { options: openedOptions, append: systemPrompt.append ?? "" };
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    );
+
+  it.effect("describes only the visual reply tools of an html-only session", () =>
+    Effect.gen(function* () {
+      const { options, append } = yield* openedQueryOptions(new Set(["html"]));
+
+      assert.isDefined(options.mcpServers?.["t3-code"]);
+      assert.include(append, "<runtime_info>");
+      assert.include(append, "html_render");
+      assert.notInclude(append, "delegate_task");
+      assert.notInclude(append, "link_pull_request");
+    }),
+  );
+
+  it.effect("keeps only runtime info without a T3 MCP session", () =>
+    Effect.gen(function* () {
+      const { options, append } = yield* openedQueryOptions(undefined);
+
+      assert.isUndefined(options.mcpServers);
+      assert.equal(
+        append,
+        buildRuntimeInstructions(
+          { harness: "Claude Code" },
+          McpProviderSession.t3AgentTools(undefined),
+        ),
+      );
+    }),
+  );
+});
+
 describe("ClaudeAdapterV2 native protocol logging", () => {
   it("injects thread-scoped MCP configuration without logging the credential", () => {
     const threadId = ThreadId.make("thread-claude-mcp");
@@ -715,7 +829,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       providerInstanceId: ProviderInstanceId.make("claudeAgent"),
       endpoint: "http://127.0.0.1:43123/mcp",
       authorizationHeader: "Bearer secret-claude-token",
-      browserToolsAvailable: true,
+      capabilities: new Set(["orchestration", "worktree", "pull-requests", "html", "preview"]),
     };
 
     const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
@@ -747,6 +861,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       cwd: "/workspace",
       allowedTools: overrides.allowedTools ?? [],
       mcpServers: overrides.mcpServers ?? {},
+      t3Tools: McpProviderSession.t3AgentTools(mcpSession),
       environment: {},
     });
     assert.isObject(options.systemPrompt);
@@ -1994,6 +2109,9 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
             cwd: null,
             environment: { PATH: "/usr/bin" },
             mcpServers: { "t3-code": t3McpServer },
+            t3Tools: McpProviderSession.t3AgentTools({
+              capabilities: new Set(["orchestration", "worktree", "pull-requests", "html"]),
+            }),
           }),
           pathToClaudeCodeExecutable: "/opt/claude/cli.js",
           spawnClaudeCodeProcess: cli.spawn,

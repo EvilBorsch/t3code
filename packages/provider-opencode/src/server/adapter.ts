@@ -56,6 +56,7 @@ import * as Stream from "effect/Stream";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
@@ -968,10 +969,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             : {}),
         });
 
-        const mcpSession = yield* mcpSessions.read(input.threadId);
-        const hasT3Mcp = mcpSession !== undefined && !connection.external;
-        const orchestrationSystemPrompt = t3OrchestrationSystemPrompt(hasT3Mcp);
-        if (hasT3Mcp) {
+        const mcpSession = connection.external
+          ? undefined
+          : yield* mcpSessions.read(input.threadId);
+        const t3Tools = McpProviderSession.t3AgentTools(mcpSession);
+        const orchestrationSystemPrompt = t3OrchestrationSystemPrompt(t3Tools);
+        if (mcpSession !== undefined) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({
               name: "t3-code",
@@ -3255,10 +3258,10 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               }
               const systemPrompt = [
                 orchestrationSystemPrompt,
-                buildRuntimeInstructions({
-                  harness: "OpenCode",
-                  model: turnInput.modelSelection.model,
-                }),
+                buildRuntimeInstructions(
+                  { harness: "OpenCode", model: turnInput.modelSelection.model },
+                  t3Tools,
+                ),
               ]
                 .filter(Boolean)
                 .join("\n\n");

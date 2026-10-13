@@ -238,6 +238,15 @@ function normalizeReplayFrame(value: unknown): unknown {
       }
       params.collaborationMode = collaborationMode;
     }
+    // Собственный контекст T3 зависит от runtime и T3-инструментов сессии,
+    // его проверяют тесты адаптеров напрямую; транскриптам его хранить не нужно.
+    if (typeof params.additionalContext === "object" && params.additionalContext !== null) {
+      const additionalContext = Object.fromEntries(
+        Object.entries(params.additionalContext).filter(([key]) => !key.startsWith("t3_code_")),
+      );
+      if (Object.keys(additionalContext).length === 0) delete params.additionalContext;
+      else params.additionalContext = additionalContext;
+    }
     normalized.params = params;
   }
 

@@ -208,9 +208,8 @@ create it on the JS engine and stall the chat. Test: `syntaxHighlighting.engine.
 
 ## 12. Agent browser access off by default
 
-`packages/contracts/src/settings.ts` — `enableAgentBrowserAccess` defaults to `false`. Upstream
-lists the same MCP tools for every session and refuses `preview_*` calls at call time, so agents
-can still see browser tools they cannot use (see _Absorbed or obsolete_, MCP catalogs).
+`packages/contracts/src/settings.ts` — `enableAgentBrowserAccess` defaults to `false`. With §15's
+`/mcp` filter, agents without browser access no longer see `preview_*` tools at all.
 
 ## 13. Local macOS build signing
 
@@ -229,6 +228,55 @@ and `NewTaskDraftScreen.tsx`), + tests — once per opened chat, after the envir
 refresh every provider with `refreshModels: true`, so a provider that recovered (logged in,
 updated CLI) becomes selectable without a trip to Settings. Upstream refreshes only the selected
 instance's stale workspace snapshot (web) or on pull-to-refresh in the model picker (mobile).
+
+## 15. Agent tool groups (what T3 adds to agents)
+
+**Why.** Upstream always attaches its `t3-code` MCP server (~80 tools) to every provider session
+and appends long orchestration and PR-linking instructions; tools a session may not use
+(`preview_*`, `device_*`) were still listed and refused at call time. The user wants a request from
+T3 to reach Claude Code / Codex like their own CLI, opting into T3 extras one group at a time.
+
+**What.** Five server settings, project-scoped, under **Settings → Integrations**:
+
+| Setting                               | MCP capability              | Prompt text                                                | Default   |
+| ------------------------------------- | --------------------------- | ---------------------------------------------------------- | --------- |
+| `enableAgentVisualReplies` (fork)     | `html` (fork)               | visuals section                                            | on        |
+| `enableAgentThreadTools` (fork)       | `orchestration`, `worktree` | orchestration instructions, handoff `t3_thread_read` hints | off       |
+| `enableAgentPullRequestTools` (fork)  | `pull-requests`             | `<pull_request_linking>`                                   | off       |
+| `enableAgentBrowserAccess` (upstream) | `preview`                   | browser block                                              | off (§12) |
+| `enableAgentDeviceAccess` (upstream)  | `device`                    | device block                                               | off       |
+
+`runtime_info` is always sent (Codex now gets it even without MCP). With every group off no
+credential is issued and the `t3-code` server is not attached. With every group on, behavior is
+upstream's.
+
+**How.**
+
+- `ProviderSessionManager.prepareMcpSession` grants exactly the enabled groups' capabilities
+  (resolved per project, fail-closed for a missing project); an empty set clears and revokes the
+  credential; a changed set rotates it. `McpSessionRegistry.issue` grants exactly what it is asked
+  for. OAuth clients (`auth/McpOAuth.ts`) also get `html`.
+- `mcp/McpHttpServer.ts` — `toolkitCapabilities` maps each toolkit to its capability; the auth
+  middleware filters `tools/list` responses and answers `tools/call` for a hidden tool with a
+  JSON-RPC "not found" error without running it. A coverage test fails when a registered tool is
+  missing from the table: add every new upstream toolkit there.
+- `packages/provider-core/src/server/mcpSession.ts` — `T3AgentTools` / `t3AgentTools(session)`;
+  `orchestrationInstructions.ts` (visuals split into `T3_CODE_VISUAL_REPLY_INSTRUCTIONS`,
+  builders take `T3AgentTools`), `runtimeInstructions.ts` (PR block only with PR tools),
+  `handoffBudget.ts`. Every adapter passes `T3AgentTools` instead of a `hasT3Mcp` boolean:
+  `ClaudeAdapterV2`, `CodexAdapterV2` + `provider/CodexDeveloperInstructions.ts`, `provider-acp`,
+  `provider-cursor`, `provider-opencode` (v1, v2), `provider-muse`, `provider-pi`
+  (`T3_PI_SYSTEM_PROMPT`). Expect small, mechanical merge conflicts at those call sites.
+- `ContextHandoffDelivery.ts` / `ProviderTurnStartService.ts` drop `t3_thread_read` hints at
+  delivery when the receiving session lacks thread tools.
+- `packages/effect-codex-app-server/src/replay.ts` ignores `t3_code_*` `additionalContext` keys when
+  matching `turn/start`, like `developer_instructions`.
+- UI: `settings/ProjectDefaultsSettings.tsx`, `settingsSearch.ts`, `SettingsPanels.tsx`; mobile
+  `SettingsServerControlsRouteScreen.tsx`. User doc: `docs/user/project-settings.md` → Agent tools.
+
+**Tests.** `ProviderSessionManager.test.ts` (capability sets per settings, overrides, rotation,
+all-off), `McpHttpServer.test.ts` (filtered list, refused call, coverage), adapter tests for each
+provider (prompt per tool set), `ContextHandoffBudget.test.ts`, provider-core instruction tests.
 
 ## Non-product files in the delta
 
@@ -252,7 +300,7 @@ instance's stale workspace snapshot (web) or on pull-to-refresh in the model pic
 | Warm thread cache healing (`isReusableThreadDetailCache`)                                                        | V2 client cache is schema-versioned (`ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION`) and drops undecodable entries; bounded windows persist with their cursor, so "no user message" is a valid state. Fix corruption by a version bump. |
 | Changed-files tree auto-expand (≤12 files)                                                                       | Upstream's `ChangedFilesCard` remembers its own expanded state and starts collapsed.                                                                                                                                                 |
 | Context-ring padding (`pr-28/pr-20/pr-12`)                                                                       | Upstream measures the composer's resting actions width.                                                                                                                                                                              |
-| MCP tool catalogs per session capability (fa65fe8b78)                                                            | Per-request caller isolation is upstream's (Effect's toolkit strips request services). Hiding tools from `tools/list` was dropped: upstream keeps one list and refuses calls at call time (`McpToolAccess`).                         |
+| MCP tool catalogs per session capability (fa65fe8b78)                                                            | Per-request caller isolation is upstream's. Hiding tools by capability is back as §15's `/mcp` filter (one server, filtered per caller), not one server per capability set.                                                          |
 
 ---
 
@@ -292,7 +340,10 @@ cd apps/server && vp test run \
   src/provider/ProviderInstanceRegistry.test.ts \
   src/terminal/NodePtyAdapter.test.ts src/terminal/Manager.test.ts \
   src/cli/desktopLaunch.test.ts src/cli/app.test.ts \
-  src/orchestration-v2/Adapters/CodexAdapterV2.test.ts
+  src/orchestration-v2/Adapters/CodexAdapterV2.test.ts \
+  src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts \
+  src/orchestration-v2/ProviderSessionManager.test.ts src/mcp/McpHttpServer.test.ts
+cd packages/provider-core && vp test run src/server
 
 # shared / desktop / mobile / scripts
 cd packages/shared && vp test run src/desktopOpenArgs.test.ts

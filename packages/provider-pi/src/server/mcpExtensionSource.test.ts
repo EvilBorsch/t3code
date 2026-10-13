@@ -112,7 +112,11 @@ describe("Pi MCP tool results", () => {
 
 describe("Pi MCP tool exposure", () => {
   it("keeps orchestration direct and optional bridge tools discoverable on modern Pi", async () => {
-    const bridge = await loadMcpBridge({ modern: true, toolSearchAvailable: true });
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      systemPrompt: "T3 instructions",
+    });
     await bridge.handlers.get("session_start")!(
       { systemPrompt: "" },
       { ui: { notify: () => undefined } },
@@ -123,7 +127,7 @@ describe("Pi MCP tool exposure", () => {
       { systemPrompt: "Pi system prompt" },
       { ui: { notify: () => undefined } },
     );
-    assert.include(prompt.systemPrompt, "orchestrator_capabilities");
+    assert.equal(prompt?.systemPrompt, "Pi system prompt\n\nT3 instructions");
     assert.equal(bridge.servers.length, 0);
     assert.equal(bridge.tools.length, 8);
     assert.deepEqual(bridge.getActiveTools(), ["read", "tool_search"]);

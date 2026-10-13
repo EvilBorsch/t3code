@@ -67,10 +67,11 @@ Changing the mode restarts the Pi provider session and resumes the same native c
 policy covers Pi tool calls; it is not an operating-system sandbox, and code that a trusted Pi
 extension runs outside a tool call remains governed by Pi's own extension trust model.
 
-T3 Code's `delegate_task` tool creates durable child threads in the shared subagent UI. If the user
-installs Pi's example `subagent` extension, T3 Code also shows its task progress and results in that
-UI. Pi runs those children without a session, so they cannot be opened or resumed as T3 Code
-threads.
+With **Agent thread tools** on in **Settings → Integrations** (see
+[Agent tools](project-settings.md#agent-tools)), T3 Code's `delegate_task` tool creates durable
+child threads in the shared subagent UI. If the user installs Pi's example `subagent` extension,
+T3 Code also shows its task progress and results in that UI. Pi runs those children without a
+session, so they cannot be opened or resumed as T3 Code threads.
 
 ## Troubleshooting
 

@@ -723,7 +723,7 @@ describe("AcpAdapterV2", () => {
         providerInstanceId: instanceId,
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer self-contained-mcp-bridge-token",
-        browserToolsAvailable: false,
+        capabilities: new Set(["orchestration", "worktree", "pull-requests", "html"]),
       });
 
       let runtimeInput: AcpAdapterV2RuntimeInput | undefined;
@@ -782,7 +782,7 @@ describe("AcpAdapterV2", () => {
         providerInstanceId: instanceId,
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer instruction-transition-token",
-        browserToolsAvailable: false,
+        capabilities: new Set(["orchestration", "worktree", "pull-requests", "html"]),
       });
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
@@ -851,7 +851,7 @@ describe("AcpAdapterV2", () => {
       assert.notInclude(command.prompt, "<t3_code_instructions>");
       const firstDefault = yield* runTurn(1, defaultPolicy, "First default request.");
       assert.include(firstDefault.prompt, "T3 Code interaction mode: Default");
-      assert.include(firstDefault.prompt, "T3 Code collaborative browser");
+      assert.notInclude(firstDefault.prompt, "T3 Code collaborative browser");
       assert.include(firstDefault.prompt, "T3 Code orchestration");
       assert.notInclude(
         firstDefault.methods,
@@ -878,6 +878,82 @@ describe("AcpAdapterV2", () => {
         "session/set_config_option",
         "Build should restore the native mode that T3 temporarily replaced for Plan",
       );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("describes only visual replies to an html-only session", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-html-only");
+      const threadId = ThreadId.make("thread-acp-html-only");
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-acp-html-only"),
+        threadId,
+        providerSessionId: "mcp-session-acp-html-only",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer html-only-token",
+        capabilities: new Set(["html"]),
+      });
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents }),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-html-only"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          ordinal: 1,
+          messageText: "Chart the results.",
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runDrain,
+      );
+      let prompt = "";
+      while (prompt === "") {
+        const event = yield* Queue.take(protocolEvents);
+        if (event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt") {
+          prompt = rawProtocolPromptText(event);
+        }
+      }
+
+      assert.include(prompt, "T3 Code visual replies");
+      assert.include(prompt, "<runtime_info>");
+      assert.notInclude(prompt, "T3 Code orchestration");
+      assert.notInclude(prompt, "link_pull_request");
+      assert.notInclude(prompt, "T3 Code collaborative browser");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -2493,7 +2569,7 @@ describe("AcpAdapterV2", () => {
         providerInstanceId: instanceId,
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer source-thread-token",
-        browserToolsAvailable: true,
+        capabilities: new Set(["orchestration", "worktree", "pull-requests", "html", "preview"]),
       });
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("environment-acp-native-fork"),
@@ -2502,7 +2578,7 @@ describe("AcpAdapterV2", () => {
         providerInstanceId: instanceId,
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer target-thread-token",
-        browserToolsAvailable: true,
+        capabilities: new Set(["orchestration", "worktree", "pull-requests", "html", "preview"]),
       });
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
@@ -2930,7 +3006,7 @@ describe("AcpAdapterV2", () => {
         providerInstanceId: instanceId,
         endpoint: "http://127.0.0.1:43124/mcp",
         authorizationHeader: "Bearer rollback-target-token",
-        browserToolsAvailable: false,
+        capabilities: new Set(["orchestration", "worktree", "pull-requests", "html"]),
       });
       const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
       const makeRuntime = makeMockRuntime({

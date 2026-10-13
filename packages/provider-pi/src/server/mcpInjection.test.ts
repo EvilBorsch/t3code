@@ -10,7 +10,9 @@ import {
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
+  T3_PI_SYSTEM_PROMPT_ENV,
 } from "./mcpExtensionSource.ts";
+import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 import {
   buildPiRpcLaunch,
   materializePiT3McpExtension,
@@ -26,7 +28,7 @@ const mcpSession = {
   providerInstanceId: ProviderInstanceId.make("pi"),
   endpoint: "http://127.0.0.1:43123/mcp",
   authorizationHeader: "Bearer secret-pi-token",
-  browserToolsAvailable: true,
+  capabilities: new Set(["orchestration", "worktree", "pull-requests", "html", "preview"]),
 };
 
 describe("pi T3 MCP injection", () => {
@@ -74,6 +76,7 @@ describe("pi T3 MCP injection", () => {
         [T3_MCP_URL_ENV]: "http://127.0.0.1:9999/stale",
         [T3_MCP_BEARER_ENV]: "stale-token",
         [T3_PI_MCP_EXTENSION_PATH_ENV]: "/stale/extension.ts",
+        [T3_PI_SYSTEM_PROMPT_ENV]: "stale instructions",
       },
       mcpSession: undefined,
       extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
@@ -85,7 +88,7 @@ describe("pi T3 MCP injection", () => {
       "--extension",
       "/tmp/cache/pi-t3-mcp-extension.ts",
     ]);
-    assert.isFalse(permissionOnly.hasT3Mcp);
+    assert.isUndefined(permissionOnly.env[T3_PI_SYSTEM_PROMPT_ENV]);
     assert.isUndefined(permissionOnly.env[T3_MCP_URL_ENV]);
     assert.isUndefined(permissionOnly.env[T3_MCP_BEARER_ENV]);
     assert.equal(permissionOnly.env[T3_PI_RUNTIME_MODE_ENV], "auto-accept-edits");
@@ -94,6 +97,35 @@ describe("pi T3 MCP injection", () => {
       "/tmp/cache/pi-t3-mcp-extension.ts",
     );
   });
+
+  it.each([
+    { capabilities: ["html"], visuals: true, threads: false },
+    { capabilities: ["orchestration", "worktree"], visuals: false, threads: true },
+    { capabilities: undefined, visuals: false, threads: false },
+  ])(
+    "appends T3 instructions for the session's tools: $capabilities",
+    async ({ capabilities, visuals, threads }) => {
+      const launch = buildPiRpcLaunch({
+        launchArgs: [],
+        environment: {},
+        mcpSession:
+          capabilities === undefined
+            ? undefined
+            : { ...mcpSession, capabilities: new Set(capabilities) },
+        extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+      });
+      const bridge = await loadMcpBridge({ systemPrompt: launch.env[T3_PI_SYSTEM_PROMPT_ENV] });
+      const result = await bridge.handlers.get("before_agent_start")!(
+        { systemPrompt: "Pi system prompt" },
+        { ui: { notify: () => undefined } },
+      );
+      const systemPrompt = result?.systemPrompt ?? "Pi system prompt";
+
+      assert.isTrue(systemPrompt.startsWith("Pi system prompt"));
+      assert.equal(systemPrompt.includes("T3 Code visual replies"), visuals);
+      assert.equal(systemPrompt.includes("delegate_task"), threads);
+    },
+  );
 
   it("falls back to Pi's first supported mode for legacy auto threads", () => {
     const launch = buildPiRpcLaunch({
@@ -134,7 +166,8 @@ describe("pi T3 MCP injection", () => {
       "--no-extensions",
       "--no-tools",
     ]);
-    assert.isFalse(launch.hasT3Mcp);
+    assert.isUndefined(launch.env[T3_MCP_URL_ENV]);
+    assert.isUndefined(launch.env[T3_PI_SYSTEM_PROMPT_ENV]);
     assert.deepInclude(resolvePiLaunchArgs("--mode text"), {
       ok: false,
       message: "Pi launch argument '--mode' is controlled by T3 Code and cannot be overridden.",

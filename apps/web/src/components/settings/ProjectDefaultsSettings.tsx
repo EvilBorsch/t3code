@@ -83,6 +83,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
   const mixedBrowser = useScopedSettingsMixed(["enableAgentBrowserAccess"]);
+  const mixedVisualReplies = useScopedSettingsMixed(["enableAgentVisualReplies"]);
+  const mixedThreadTools = useScopedSettingsMixed(["enableAgentThreadTools"]);
+  const mixedPullRequestTools = useScopedSettingsMixed(["enableAgentPullRequestTools"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
@@ -268,7 +271,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         category === "general" || category === "project"
           ? "New threads"
           : category === "integrations"
-            ? "Browser"
+            ? "Agent tools"
             : "Repositories"
       }
     >
@@ -527,6 +530,107 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 mixed={mixedBrowser}
                 checked={mixedBrowser ? false : settings.enableAgentBrowserAccess}
                 onCheckedChange={(enabled) => updateSettings({ enableAgentBrowserAccess: enabled })}
+              />
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["enableAgentVisualReplies"]}
+            mixed={mixedVisualReplies}
+            id={searchableSetting("agent-visual-replies").id}
+            title="Agent visual replies"
+            description={
+              isProjectScope
+                ? "Let agents in this project answer with HTML pages. Applies when the agent session next starts."
+                : "Let agents answer with HTML pages: charts, tables, diagrams, mockups. Projects can override it."
+            }
+            resetAction={
+              settings.enableAgentVisualReplies !==
+              DEFAULT_SERVER_SETTINGS.enableAgentVisualReplies ? (
+                <SettingResetButton
+                  label="default visual replies"
+                  onClick={() =>
+                    updateSettings({
+                      enableAgentVisualReplies: DEFAULT_SERVER_SETTINGS.enableAgentVisualReplies,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label="Agent visual replies"
+                mixed={mixedVisualReplies}
+                checked={mixedVisualReplies ? false : settings.enableAgentVisualReplies}
+                onCheckedChange={(enabled) => updateSettings({ enableAgentVisualReplies: enabled })}
+              />
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["enableAgentThreadTools"]}
+            mixed={mixedThreadTools}
+            id={searchableSetting("agent-thread-tools").id}
+            title="Agent thread tools"
+            description={
+              isProjectScope
+                ? "Let agents in this project delegate to other models, start and read threads, schedule tasks and manage worktrees. Applies when the agent session next starts."
+                : "Let agents delegate to other models, start and read threads, schedule tasks and manage worktrees. Projects can override it."
+            }
+            resetAction={
+              settings.enableAgentThreadTools !== DEFAULT_SERVER_SETTINGS.enableAgentThreadTools ? (
+                <SettingResetButton
+                  label="default thread tools"
+                  onClick={() =>
+                    updateSettings({
+                      enableAgentThreadTools: DEFAULT_SERVER_SETTINGS.enableAgentThreadTools,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label="Agent thread tools"
+                mixed={mixedThreadTools}
+                checked={mixedThreadTools ? false : settings.enableAgentThreadTools}
+                onCheckedChange={(enabled) => updateSettings({ enableAgentThreadTools: enabled })}
+              />
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["enableAgentPullRequestTools"]}
+            mixed={mixedPullRequestTools}
+            id={searchableSetting("agent-pull-request-tools").id}
+            title="Agent pull request tools"
+            description={
+              isProjectScope
+                ? "Let agents in this project link pull requests to the thread and watch them for checks and reviews. Applies when the agent session next starts."
+                : "Let agents link pull requests to the thread and watch them for checks and reviews. Projects can override it."
+            }
+            resetAction={
+              settings.enableAgentPullRequestTools !==
+              DEFAULT_SERVER_SETTINGS.enableAgentPullRequestTools ? (
+                <SettingResetButton
+                  label="default pull request tools"
+                  onClick={() =>
+                    updateSettings({
+                      enableAgentPullRequestTools:
+                        DEFAULT_SERVER_SETTINGS.enableAgentPullRequestTools,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label="Agent pull request tools"
+                mixed={mixedPullRequestTools}
+                checked={mixedPullRequestTools ? false : settings.enableAgentPullRequestTools}
+                onCheckedChange={(enabled) =>
+                  updateSettings({ enableAgentPullRequestTools: enabled })
+                }
               />
             }
           />

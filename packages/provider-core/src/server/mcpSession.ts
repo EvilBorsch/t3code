@@ -7,15 +7,8 @@ export interface McpProviderSessionConfig {
   readonly providerInstanceId: ProviderInstanceId;
   readonly endpoint: string;
   readonly authorizationHeader: string;
-  /**
-   * Whether this credential includes the "preview" capability. Adapters read
-   * it to keep developer instructions truthful: when the user withholds agent
-   * browser access, the prompt must not advertise `preview_*` tools that every
-   * call would reject.
-   */
-  readonly browserToolsAvailable: boolean;
-  /** Capabilities the credential grants ("preview", "device"). */
-  readonly capabilities?: ReadonlySet<string>;
+  /** Capabilities the credential grants; read them through `t3AgentTools`. */
+  readonly capabilities: ReadonlySet<string>;
   /**
    * Set when the session may drive devices. Adapters spread this into the
    * provider subprocess environment so the `agent-device` CLI is on PATH and
@@ -23,6 +16,28 @@ export interface McpProviderSessionConfig {
    */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
 }
+
+/** Группы T3-инструментов, доступные сессии провайдера; без сервера `t3-code` все false. */
+export interface T3AgentTools {
+  readonly threads: boolean;
+  readonly pullRequests: boolean;
+  readonly visualReplies: boolean;
+  readonly browser: boolean;
+  readonly device: boolean;
+}
+
+export const t3AgentTools = (
+  session: Pick<McpProviderSessionConfig, "capabilities"> | undefined,
+): T3AgentTools => {
+  const capabilities = session?.capabilities ?? new Set<string>();
+  return {
+    threads: capabilities.has("orchestration"),
+    pullRequests: capabilities.has("pull-requests"),
+    visualReplies: capabilities.has("html"),
+    browser: capabilities.has("preview"),
+    device: capabilities.has("device"),
+  };
+};
 
 /** Provider env with the device variables applied over `base`, or `base` untouched. */
 export function withAgentDeviceEnvironment(

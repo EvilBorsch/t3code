@@ -25,6 +25,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Record from "effect/Record";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -43,6 +44,7 @@ import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
+import type { McpCapability } from "../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -60,6 +62,16 @@ const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThread
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
   `${busyTurnPrefix(providerThreadId)}${runOrdinal}`;
 const UNLOAD_THREAD_TIMEOUT_MS = 10 * 1000;
+
+/** Настройка, за которой стоит каждая группа инструментов агента на MCP-сервере `t3-code`. */
+const AGENT_ACCESS_SETTINGS = {
+  threads: "enableAgentThreadTools",
+  pullRequests: "enableAgentPullRequestTools",
+  visualReplies: "enableAgentVisualReplies",
+  browser: "enableAgentBrowserAccess",
+  device: "enableAgentDeviceAccess",
+} as const;
+type AgentAccessSetting = (typeof AGENT_ACCESS_SETTINGS)[keyof typeof AGENT_ACCESS_SETTINGS];
 
 export const ProviderSessionReleaseReason = Schema.Literals([
   "idle_timeout",
@@ -362,38 +374,35 @@ export const layerWithOptions = (
       const agentScope = yield* AgentScope;
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
-          if (Option.isNone(serverSettings)) return { browser: true, device: false };
+          if (Option.isNone(serverSettings)) {
+            return Record.map(AGENT_ACCESS_SETTINGS, (key) => key !== "enableAgentDeviceAccess");
+          }
           return yield* Effect.gen(function* () {
             const settings = yield* serverSettings.value.getSettings;
             const thread = yield* projectionStore.getThread(threadId);
             const entries = Object.values(settings.projectSettingsOverrides);
-            const browserOverridden = entries.some(
-              (entry) => entry.enableAgentBrowserAccess !== undefined,
-            );
-            const deviceOverridden = entries.some(
-              (entry) => entry.enableAgentDeviceAccess !== undefined,
-            );
-            if (browserOverridden || deviceOverridden) {
-              const project = Option.isSome(projectService)
+            const overridden = (key: AgentAccessSetting) =>
+              entries.some((entry) => entry[key] !== undefined);
+            const anyOverridden = Object.values(AGENT_ACCESS_SETTINGS).some(overridden);
+            const project =
+              anyOverridden && Option.isSome(projectService)
                 ? yield* projectService.value.getById(thread.projectId)
                 : Option.none();
-              if (Option.isNone(project))
-                return {
-                  browser: browserOverridden ? false : settings.enableAgentBrowserAccess,
-                  device: deviceOverridden ? false : settings.enableAgentDeviceAccess,
-                };
-            }
-            const effective = resolveProjectSettings(settings, thread.projectId).settings;
-            return {
-              browser: effective.enableAgentBrowserAccess,
-              device: effective.enableAgentDeviceAccess,
-            };
+            // Ненайденный проект не может доказать, что группу переопределяет
+            // не он, поэтому переопределённые группы закрываются.
+            const projectMissing = anyOverridden && Option.isNone(project);
+            const effective = projectMissing
+              ? settings
+              : resolveProjectSettings(settings, thread.projectId).settings;
+            return Record.map(AGENT_ACCESS_SETTINGS, (key) =>
+              projectMissing && overridden(key) ? false : effective[key],
+            );
           }).pipe(
             Effect.catch((cause) =>
-              Effect.logWarning(
-                "Could not resolve agent access; withholding browser and device tools.",
-                { threadId, cause },
-              ).pipe(Effect.as({ browser: false, device: false })),
+              Effect.logWarning("Could not resolve agent access; withholding agent tools.", {
+                threadId,
+                cause,
+              }).pipe(Effect.as(Record.map(AGENT_ACCESS_SETTINGS, () => false))),
             ),
           );
         },
@@ -482,19 +491,27 @@ export const layerWithOptions = (
           : mcpPrepareLock.withLock(
               threadId,
               Effect.gen(function* () {
+                const access = yield* agentAccessSettings(threadId);
+                const capabilities = new Set<McpCapability>([
+                  ...(access.visualReplies ? (["html"] as const) : []),
+                  ...(access.threads ? (["orchestration", "worktree"] as const) : []),
+                  ...(access.pullRequests ? (["pull-requests"] as const) : []),
+                  ...(access.browser ? (["preview"] as const) : []),
+                  ...(access.device ? (["device"] as const) : []),
+                ]);
+                // Когда все группы выключены, тред не получает сервер `t3-code`, а
+                // credential, выданный при прежних настройках, перестаёт работать.
+                if (capabilities.size === 0) {
+                  yield* mcpSessionRegistry.revokeThread(threadId);
+                  yield* mcpSessions.clear(threadId);
+                  return { mcpCredentialId: undefined, issued: false };
+                }
                 // Reuse a still-valid credential for this thread instead of
                 // rotating: long-lived provider processes (codex app-server)
                 // build their MCP client once per conversation and keep using
                 // the credential it started with, so a thread that detaches and
                 // re-attaches across a workspace handoff must come back to the
                 // same token or the process's tool calls fail auth.
-                const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
-                  yield* agentAccessSettings(threadId);
-                const capabilities = new Set<
-                  import("../mcp/McpInvocationContext.ts").McpCapability
-                >(["orchestration", "worktree", "pull-requests"]);
-                if (browserToolsAvailable) capabilities.add("preview");
-                if (deviceToolsAvailable) capabilities.add("device");
                 const existing = yield* mcpSessions.read(threadId);
                 if (existing !== undefined) {
                   // Reserve before the async resolve so a release cannot
@@ -516,10 +533,10 @@ export const layerWithOptions = (
                     resolved !== undefined &&
                     resolved.thread.threadId === threadId &&
                     resolved.thread.providerInstanceId === providerInstanceId &&
-                    // A flipped browser-access setting must not survive through
+                    // A flipped access setting must not survive through
                     // credential reuse: rotate so the new scope reflects it.
-                    resolved.capabilities.has("preview") === browserToolsAvailable &&
-                    resolved.capabilities.has("device") === deviceToolsAvailable
+                    resolved.capabilities.size === capabilities.size &&
+                    [...capabilities].every((capability) => resolved.capabilities.has(capability))
                   ) {
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
@@ -529,7 +546,6 @@ export const layerWithOptions = (
                 const credential = yield* mcpSessionRegistry.issue({
                   threadId,
                   providerInstanceId,
-                  browserToolsAvailable,
                   capabilities,
                 });
                 yield* mcpSessions.set(credential.config);

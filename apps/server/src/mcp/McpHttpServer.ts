@@ -12,7 +12,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, type Toolkit } from "effect/ai";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpBody, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { OrchestratorMcpFailure, PreviewAutomationError } from "@t3tools/contracts";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -145,6 +145,64 @@ export const normalizeMcpHttpResponse = (
 // Session tokens are `<payload>.<signature>`; registry tokens are a bare base64url secret.
 const looksLikeProviderToken = (token: string) => token.length > 0 && !token.includes(".");
 
+/** Какая capability нужна сессии, чтобы видеть и вызывать инструменты каждого toolkit. */
+export const toolkitCapabilities = [
+  ["orchestration", OrchestratorToolkit],
+  ["orchestration", ThreadToolkit],
+  ["orchestration", ProjectToolkit],
+  ["orchestration", EnvironmentToolkit],
+  ["orchestration", AttachmentToolkit],
+  ["worktree", WorktreeToolkit],
+  ["pull-requests", PullRequestsToolkit],
+  ["preview", PreviewStandardToolkit],
+  ["preview", PreviewSnapshotToolkit],
+  ["preview", PreviewControlsToolkit],
+  ["device", DeviceStandardToolkit],
+  ["device", DeviceScreenshotToolkit],
+  ["html", HtmlPreviewToolkit],
+  ["html", HtmlRenderToolkit],
+] as const;
+
+const hiddenToolNames = (capabilities: ReadonlySet<McpInvocationContext.McpCapability>) =>
+  new Set(
+    toolkitCapabilities.flatMap(([capability, toolkit]) =>
+      capabilities.has(capability) ? [] : Object.keys(toolkit.tools),
+    ),
+  );
+
+const JsonRpcId = Schema.Union([Schema.String, Schema.Number]);
+const decodeToolsRequest = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Union([
+      Schema.Struct({ id: JsonRpcId, method: Schema.Literal("tools/list") }),
+      Schema.Struct({
+        id: JsonRpcId,
+        method: Schema.Literal("tools/call"),
+        params: Schema.Struct({ name: Schema.String }),
+      }),
+    ]),
+  ),
+);
+// Сохраняет все неназванные поля, так что отфильтрованный список уходит в остальном без изменений.
+const JsonObjectRest = [Schema.Record(Schema.String, Schema.Unknown)] as const;
+const decodeToolsListResponse = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.StructWithRest(
+      Schema.Struct({
+        result: Schema.StructWithRest(
+          Schema.Struct({
+            tools: Schema.Array(
+              Schema.StructWithRest(Schema.Struct({ name: Schema.String }), JsonObjectRest),
+            ),
+          }),
+          JsonObjectRest,
+        ),
+      }),
+      JsonObjectRest,
+    ),
+  ),
+);
+
 const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
@@ -173,9 +231,45 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         offerOAuth: Option.isSome(clients) && !looksLikeProviderToken(token),
       });
     }
-    return yield* httpEffect.pipe(
+    const respond = httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
       Effect.map(normalizeMcpHttpResponse),
+    );
+    // McpServer показывает и запускает все зарегистрированные инструменты любому
+    // вызывающему, поэтому инструменты вне его capabilities скрываются и
+    // отклоняются здесь. Батчи проходят как есть: протокол 2025-06-18 их отвергает.
+    const body = request.method === "POST" ? yield* Effect.option(request.text) : Option.none();
+    const toolsRequest = Option.flatMap(body, decodeToolsRequest);
+    if (Option.isNone(toolsRequest)) return yield* respond;
+    const hidden = hiddenToolNames(invocation.capabilities);
+    const message = toolsRequest.value;
+    if (message.method === "tools/call") {
+      return hidden.has(message.params.name)
+        ? HttpServerResponse.jsonUnsafe({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32602, message: `Tool '${message.params.name}' not found` },
+          })
+        : yield* respond;
+    }
+    const response = yield* respond;
+    // Фильтруется только JSON-ответ со списком; ошибки уходят как есть. Ответ
+    // потоком (SSE) тоже уходит без фильтра: скрытые инструменты в нём видны,
+    // но их вызовы всё равно отклоняются.
+    const listed =
+      response.body._tag === "Uint8Array"
+        ? decodeToolsListResponse(new TextDecoder().decode(response.body.body))
+        : Option.none();
+    if (Option.isNone(listed)) return response;
+    return HttpServerResponse.setBody(
+      response,
+      HttpBody.jsonUnsafe({
+        ...listed.value,
+        result: {
+          ...listed.value.result,
+          tools: listed.value.result.tools.filter((tool) => !hidden.has(tool.name)),
+        },
+      }),
     );
   }) satisfies McpAuthMiddleware;
 }).pipe(Effect.withSpan("McpHttpServer.makeAuthMiddleware"));

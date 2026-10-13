@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import {
   contextUsageForHandoff,
   handoffBudget,
+  handoffCoverage,
   historyCost,
   historyResponseItems,
   selectHistory,
@@ -434,6 +435,7 @@ describe("handoff delivery", () => {
         providerThread,
         budget: 16_000,
         alreadyDeliveredItemIds: new Set(),
+        threadReadAvailable: true,
         inject: (value) => {
           assert.include(value.context, "omitted 2 items");
           assert.notInclude(
@@ -468,6 +470,7 @@ describe("handoff delivery", () => {
           return 16_000;
         }),
         alreadyDeliveredItemIds: new Set<string>(),
+        threadReadAvailable: true,
         persist: () => Effect.void,
       };
       yield* deliverContextHandoffs({ ...input, handoffs: [] });
@@ -501,6 +504,7 @@ describe("handoff delivery", () => {
         providerThread,
         budget: 16_000,
         alreadyDeliveredItemIds: new Set<string>(),
+        threadReadAvailable: true,
         inject: (value: ProviderAdapter.ProviderAdapterV2HistoricalContext) =>
           Effect.sync(() => {
             history.push(...historyResponseItems(value.messages, value.context));
@@ -533,6 +537,7 @@ describe("handoff delivery", () => {
           providerThread,
           budget: 16_000,
           alreadyDeliveredItemIds: new Set(),
+          threadReadAvailable: true,
           inject: () => Effect.succeed(false),
           persist: (value) =>
             Effect.sync(() => {
@@ -561,6 +566,7 @@ describe("handoff delivery", () => {
           providerThread,
           budget: 16_000,
           alreadyDeliveredItemIds: new Set(),
+          threadReadAvailable: true,
           deferInline: true,
           inject: () => Effect.succeed(false),
           persist,
@@ -573,6 +579,7 @@ describe("handoff delivery", () => {
           providerThread,
           budget: 16_000,
           alreadyDeliveredItemIds: new Set(),
+          threadReadAvailable: true,
           inject: () => Effect.succeed(false),
           persist,
         });
@@ -594,6 +601,7 @@ describe("handoff delivery", () => {
         providerThread,
         budget: 2_500,
         alreadyDeliveredItemIds: new Set(),
+        threadReadAvailable: true,
         inject: (history) =>
           Effect.sync(() => {
             captured = history;
@@ -611,6 +619,54 @@ describe("handoff delivery", () => {
     }),
   );
 
+  it.effect("names t3_thread_read only to a session that has the thread tools", () =>
+    Effect.gen(function* () {
+      const recorded: OrchestrationV2ContextHandoff = {
+        ...handoff,
+        history: {
+          ...handoff.history!,
+          coverage: handoffCoverage({
+            threadId,
+            coveredRunOrdinals: handoff.coveredRunOrdinals,
+            items: [],
+          }),
+        },
+      };
+      const deliver = (handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>, budget: number) =>
+        deliverContextHandoffs({
+          handoffs,
+          providerThread,
+          budget,
+          alreadyDeliveredItemIds: new Set(),
+          threadReadAvailable: false,
+          inject: () => Effect.succeed(false),
+          persist: () => Effect.void,
+        });
+
+      const single = yield* deliver([recorded], 16_000);
+      assert.include(single.context, "Covered app runs: 1-2.");
+      assert.include(single.context, messages[0]!.text);
+      assert.include(
+        single.context,
+        "Run/item IDs identify historical activity; no foreign tool calls are replayed.",
+      );
+      assert.notInclude(single.context, "t3_thread_read");
+
+      const legacy = yield* deliver([{ ...handoff, history: undefined }], 16_000);
+      assert.notInclude(legacy.context, "t3_thread_read");
+
+      const bounded = yield* deliver(
+        Array.from({ length: 100 }, (_, index) => ({
+          ...recorded,
+          id: ContextHandoffId.make(`handoff:no-thread-tools:${index}`),
+        })),
+        2_500,
+      );
+      assert.include(bounded.context, "detailed coverage references omitted");
+      assert.notInclude(bounded.context, "t3_thread_read");
+    }),
+  );
+
   it.effect("does not redeliver after ambiguous injection failure", () =>
     Effect.gen(function* () {
       let durable = handoff;
@@ -619,6 +675,7 @@ describe("handoff delivery", () => {
         providerThread,
         budget: 16_000,
         alreadyDeliveredItemIds: new Set<string>(),
+        threadReadAvailable: true,
         inject: () =>
           Effect.sync(() => {
             calls++;
@@ -654,6 +711,7 @@ describe("handoff delivery", () => {
         providerThread,
         budget: 2_500,
         alreadyDeliveredItemIds: new Set(["item:one"]),
+        threadReadAvailable: true,
         inject: (value) =>
           Effect.sync(() => {
             delivered = historyResponseItems(value.messages, value.context);
@@ -677,6 +735,7 @@ describe("handoff delivery", () => {
         providerThread,
         budget: 0,
         alreadyDeliveredItemIds: new Set(),
+        threadReadAvailable: true,
         inject: () =>
           Effect.sync(() => {
             calls++;

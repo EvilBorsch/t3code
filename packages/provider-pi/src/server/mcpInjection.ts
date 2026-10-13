@@ -2,7 +2,11 @@ import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
-import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
+import {
+  t3AgentTools,
+  type McpProviderSessionConfig,
+} from "@t3tools/provider-core/server/mcpSession";
+import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import {
   PI_T3_MCP_EXTENSION_FILENAME,
   PI_T3_MCP_EXTENSION_SOURCE,
@@ -10,6 +14,7 @@ import {
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
+  T3_PI_SYSTEM_PROMPT_ENV,
 } from "./mcpExtensionSource.ts";
 
 const RESERVED_PI_LAUNCH_ARGUMENTS = new Set([
@@ -260,10 +265,10 @@ export function buildPiRpcLaunch(input: {
 }): {
   readonly args: ReadonlyArray<string>;
   readonly env: NodeJS.ProcessEnv;
-  readonly hasT3Mcp: boolean;
 } {
   const hasT3Extension = input.disableExtensions !== true && input.extensionPath !== undefined;
-  const hasT3Mcp = hasT3Extension && input.mcpSession !== undefined;
+  const mcpSession = hasT3Extension ? input.mcpSession : undefined;
+  const systemPrompt = t3OrchestrationSystemPrompt(t3AgentTools(mcpSession));
   const extensionSafeArgs =
     input.disableExtensions === true
       ? withoutExplicitExtensions(input.launchArgs)
@@ -293,6 +298,7 @@ export function buildPiRpcLaunch(input: {
   delete environment[T3_MCP_URL_ENV];
   delete environment[T3_MCP_BEARER_ENV];
   delete environment[T3_PI_MCP_EXTENSION_PATH_ENV];
+  delete environment[T3_PI_SYSTEM_PROMPT_ENV];
 
   return {
     args,
@@ -307,15 +313,13 @@ export function buildPiRpcLaunch(input: {
               input.runtimeMode === "auto" ? "approval-required" : input.runtimeMode,
           }
         : {}),
-      ...(hasT3Mcp && input.mcpSession !== undefined
-        ? {
-            [T3_MCP_URL_ENV]: input.mcpSession.endpoint,
-            [T3_MCP_BEARER_ENV]: bearerTokenFromAuthorizationHeader(
-              input.mcpSession.authorizationHeader,
-            ),
-          }
-        : {}),
+      ...(mcpSession === undefined
+        ? {}
+        : {
+            [T3_MCP_URL_ENV]: mcpSession.endpoint,
+            [T3_MCP_BEARER_ENV]: bearerTokenFromAuthorizationHeader(mcpSession.authorizationHeader),
+          }),
+      ...(systemPrompt === undefined ? {} : { [T3_PI_SYSTEM_PROMPT_ENV]: systemPrompt.trim() }),
     },
-    hasT3Mcp,
   };
 }
