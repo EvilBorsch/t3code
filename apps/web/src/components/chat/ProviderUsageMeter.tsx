@@ -47,7 +47,7 @@ export function UsageRing({
           cy="12"
           r={radius}
           fill="none"
-          stroke="color-mix(in oklab, var(--color-muted-foreground) 24%, transparent)"
+          className="stroke-muted-foreground/24"
           strokeWidth="3"
         />
         {window.usedPercent > 0 ? (
@@ -66,7 +66,7 @@ export function UsageRing({
         ) : null}
       </svg>
       {showBadge ? (
-        <span className="relative select-none text-[9px] leading-none font-semibold tracking-tight text-foreground/80">
+        <span className="relative select-none text-3xs leading-none font-semibold tracking-tight text-foreground/80">
           {window.badge}
         </span>
       ) : null}
@@ -90,7 +90,7 @@ function UsageWindowRow({
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between gap-3">
         <span className="font-medium text-xs text-muted-foreground">{window.title}</span>
-        <span className="text-[11px] tabular-nums">
+        <span className="text-2xs tabular-nums">
           <span style={{ color: TONE_COLOR[window.tone] }}>{window.usedPercent}% used</span>
           <span className="mx-1 text-secondary-label">·</span>
           <span className="font-medium text-foreground">{window.remainingPercent}% left</span>
@@ -109,7 +109,7 @@ function UsageWindowRow({
           style={{ width: `${window.usedPercent}%`, backgroundColor: TONE_COLOR[window.tone] }}
         />
       </div>
-      <div className="text-[11px] leading-4 text-secondary-label">
+      <div className="text-2xs leading-4 text-secondary-label">
         {formatUsageReset(window, nowMs)}
         {resetsAt ? ` (${resetsAt})` : ""}
         {window.pace ? ` · ${PACE_LABEL[window.pace]}` : ""}
@@ -134,18 +134,18 @@ export function ProviderUsageMeter({ provider }: { readonly provider: ServerProv
   const plan = provider.auth.status === "authenticated" ? provider.auth.label : undefined;
   const credits = limits.resetCredits;
   const details = (
-    <div className="flex flex-col gap-2.5 p-[var(--floating-content-inset)]">
+    <div className="flex flex-col gap-2.5 p-(--floating-content-inset)">
       <div className="flex items-center justify-between gap-3">
         <span className="font-medium text-xs text-muted-foreground">
           {providerName} · usage limits
         </span>
-        {plan ? <span className="text-[11px] text-secondary-label">{plan}</span> : null}
+        {plan ? <span className="text-2xs text-secondary-label">{plan}</span> : null}
       </div>
       {windows.map((window) => (
         <UsageWindowRow key={window.id} window={window} nowMs={nowMs} />
       ))}
       {credits && credits.availableCount > 0 ? (
-        <div className="text-[11px] leading-4 text-secondary-label tabular-nums">
+        <div className="text-2xs leading-4 text-secondary-label tabular-nums">
           {resetCreditsSummary(credits, nowMs)}
         </div>
       ) : null}
@@ -164,7 +164,7 @@ export function ProviderUsageMeter({ provider }: { readonly provider: ServerProv
               <Button
                 size="icon-sm"
                 variant="ghost-muted"
-                className="size-7 rounded-full hover:text-muted-foreground data-pressed:text-muted-foreground"
+                className="size-7"
                 aria-label={`${providerName} ${window.title}: ${window.usedPercent}% used, ${window.remainingPercent}% left. ${formatUsageReset(window, nowMs)}`}
               >
                 <UsageRing window={window} className="size-6" />

@@ -7,9 +7,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import * as PtyAdapter from "./PtyAdapter.ts";
+import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
 export class NodePtyModuleLoadError extends Schema.TaggedError<NodePtyModuleLoadError>()(
   "NodePtyModuleLoadError",
@@ -31,9 +31,6 @@ type NodePtyPackageJsonResolver = () => string;
 // резолверами (например, в тестах) должны chmod'ить каждый свой helper.
 const ensuredSpawnHelperPaths = new Set<string>();
 
-const defaultNodePtyPackageJsonResolver: NodePtyPackageJsonResolver = () =>
-  NodeModule.createRequire(import.meta.url).resolve("node-pty/package.json");
-
 // node-pty stays external to the CLI bundle because it dlopens a native
 // addon. Inside a Node single-executable, `import()` cannot load files from
 // disk (only built-ins resolve), while `require` always reads the real
@@ -49,13 +46,20 @@ export const NodePtyModuleLoaderRef = Context.Reference<NodePtyModuleLoader>(
   { defaultValue: () => loadNodePty },
 );
 
+/** Injectable so tests can lay out a packaged (`app.asar`) node-pty. */
+export const NodePtyPackageJsonResolverRef = Context.Reference<NodePtyPackageJsonResolver>(
+  "server/terminal/NodePtyPackageJsonResolver",
+  { defaultValue: () => () => requireForNodePty.resolve("node-pty/package.json") },
+);
+
 const resolveNodePtySpawnHelperPath = (resolvePackageJson: NodePtyPackageJsonResolver) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
-    const platform = yield* HostProcessPlatform;
-    const architecture = yield* HostProcessArchitecture;
+    const platform = yield* HostProcess.Platform;
+    const architecture = yield* HostProcess.Architecture;
 
+    // Electron грузит JS из app.asar, но исполняемый spawn-helper лежит в app.asar.unpacked.
     const packageDir = path
       .dirname(resolvePackageJson())
       .replace(/(^|[/\\])app\.asar(?=($|[/\\]))/, "$1app.asar.unpacked")
@@ -78,7 +82,7 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* (
   resolvePackageJson: NodePtyPackageJsonResolver,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   if (platform === "win32") return;
 
   const helperPath = yield* resolveNodePtySpawnHelperPath(resolvePackageJson);
@@ -242,18 +246,16 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   }
 }
 
-export const make = Effect.fn("NodePtyAdapter.make")(function* (
-  loadNodePtyModule?: NodePtyModuleLoader,
-  resolvePackageJson: NodePtyPackageJsonResolver = defaultNodePtyPackageJsonResolver,
-) {
-  const moduleLoader = loadNodePtyModule ?? (yield* NodePtyModuleLoaderRef);
+export const make = Effect.fn("NodePtyAdapter.make")(function* () {
+  const loadNodePtyModule = yield* NodePtyModuleLoaderRef;
+  const resolvePackageJson = yield* NodePtyPackageJsonResolverRef;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
-  const architecture = yield* HostProcessArchitecture;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
 
   const nodePty = yield* Effect.tryPromise({
-    try: moduleLoader,
+    try: loadNodePtyModule,
     catch: (cause) =>
       new NodePtyModuleLoadError({
         platform,
@@ -266,8 +268,8 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* (
     ensureNodePtySpawnHelperExecutable(resolvePackageJson).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
-      Effect.provideService(HostProcessPlatform, platform),
-      Effect.provideService(HostProcessArchitecture, architecture),
+      Effect.provideService(HostProcess.Platform, platform),
+      Effect.provideService(HostProcess.Architecture, architecture),
       Effect.orElseSucceed(() => undefined),
     ),
   );

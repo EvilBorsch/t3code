@@ -22,8 +22,8 @@ What the fork still carries on top of upstream:
 - **Providers refresh when opening a chat** — new and existing chats refresh provider availability and models once per visit, so recovered providers become selectable without a trip to Settings.
 - **OS file drops as mentions** — a file dropped from the desktop onto the composer becomes an absolute-path `@` mention when the app can resolve its path; images and everything else become attachments.
 - **Claude probe from a neutral directory** — the capability probe never runs in the server's working directory, which on desktop is `$HOME` and takes close to a minute to scan.
-- **Warm thread cache healing** — a cached thread that lost its user prompt is discarded and reloaded instead of rendering a one-sided conversation.
-- **Turn-fold prompt previews** and smaller default changed-files trees in the timeline.
+- **Turn-fold prompt previews** — each collapsed turn shows the prompt that started it and jumps back to it.
+- **Codex model reroutes in the work log** — when Codex switches models mid-turn, the turn says so.
 - Agent browser access is **off** by default.
 
 [**`diff_with_master.md`**](./diff_with_master.md) is the full handoff document for everything that differs from upstream — themes, rationale, pitfalls, and the open follow-ups left by the last upstream merge.
@@ -64,6 +64,12 @@ Install the latest version of the desktop app from [GitHub Releases](https://git
 
 ```bash
 winget install T3Tools.T3Code
+```
+
+#### Windows (`scoop`)
+
+```bash
+scoop install extras/t3code
 ```
 
 #### macOS (Homebrew)
@@ -110,7 +116,9 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 - [Permission modes](./docs/user/permission-modes.md)
 - [Keyboard shortcuts](./docs/user/keybindings.md)
 - [Project settings](./docs/user/project-settings.md)
+- [Appearance preferences](./docs/user/appearance.md)
 - [Remote access from a phone or another machine](./docs/user/remote-access.md)
+- [Connect Claude Code, Codex, ChatGPT and other agents over MCP](./docs/user/outside-agents.md)
 - [Keeping app and server in sync](./docs/user/updating.md)
 - [Source control integrations](./docs/user/source-control.md)
 - Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)

@@ -1,6 +1,6 @@
 import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentId } from "@t3tools/contracts";
-import { AsyncResult, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";

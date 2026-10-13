@@ -6,7 +6,7 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { openWorkspaceInDesktop } from "./openWorkspaceIntent";
@@ -32,6 +32,7 @@ const provider = (instanceId: string, driver: string, modelSlug: string): Server
 describe("openWorkspaceInDesktop", () => {
   it("creates a project and starts a new thread when missing", async () => {
     const createProject = vi.fn(async () => AsyncResult.success(undefined));
+    const waitForProject = vi.fn(async () => undefined);
     const handleNewThread = vi.fn(async () => undefined);
     const expandProject = vi.fn();
 
@@ -45,6 +46,7 @@ describe("openWorkspaceInDesktop", () => {
       projects: [],
       providers: [],
       createProject,
+      waitForProject,
       handleNewThread,
       expandProject,
     });
@@ -53,6 +55,10 @@ describe("openWorkspaceInDesktop", () => {
     expect(createProject).toHaveBeenCalledOnce();
     expect(handleNewThread).toHaveBeenCalledOnce();
     expect(expandProject).toHaveBeenCalledOnce();
+    // Тред открывается только после того, как созданный проект появился в read model.
+    expect(waitForProject.mock.invocationCallOrder[0]).toBeLessThan(
+      handleNewThread.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("reuses an existing project and still starts a new thread", async () => {
@@ -77,6 +83,7 @@ describe("openWorkspaceInDesktop", () => {
       ],
       providers: [],
       createProject,
+      waitForProject: async () => undefined,
       handleNewThread,
     });
 
@@ -108,6 +115,7 @@ describe("openWorkspaceInDesktop", () => {
       projects: [],
       providers: [provider("claudeAgent", "claude", "claude-opus-5")],
       createProject,
+      waitForProject: async () => undefined,
       handleNewThread: async () => undefined,
     });
 
@@ -129,11 +137,40 @@ describe("openWorkspaceInDesktop", () => {
       projects: [],
       providers: [],
       createProject: async () => AsyncResult.failure(Cause.fail(new Error("nope"))),
+      waitForProject: async () => undefined,
       handleNewThread: async () => undefined,
       onError,
     });
 
     expect(ok).toBe(false);
     expect(onError).toHaveBeenCalled();
+  });
+
+  it("does not open a thread when the new project never reaches the read model", async () => {
+    const onError = vi.fn();
+    const handleNewThread = vi.fn(async () => undefined);
+    const ok = await openWorkspaceInDesktop({
+      intent: {
+        workspaceRoot: "/tmp/brain",
+        newThread: true,
+        source: "pending-file",
+      },
+      environmentId,
+      projects: [],
+      providers: [],
+      createProject: async () => AsyncResult.success(undefined),
+      waitForProject: async () => {
+        throw new Error("The project did not appear in the desktop app.");
+      },
+      handleNewThread,
+      onError,
+    });
+
+    expect(ok).toBe(false);
+    expect(handleNewThread).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(
+      "Failed to open workspace",
+      "The project did not appear in the desktop app.",
+    );
   });
 });

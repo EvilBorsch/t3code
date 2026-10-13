@@ -130,15 +130,7 @@ export const make = Effect.gen(function* () {
       return;
     }
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
-    const didDispatch = yield* desktopWindow.dispatchOpenWorkspace(pending.value);
-    if (!didDispatch) {
-      return;
-    }
-    yield* logOpenIntentInfo("dispatched open-workspace intent", {
-      workspaceRoot: pending.value.workspaceRoot,
-      newThread: pending.value.newThread,
-      source: pending.value.source,
-    });
+    yield* desktopWindow.dispatchOpenWorkspace(pending.value);
   }).pipe(Effect.withSpan("desktop.openIntent.flush"));
 
   const peek = Ref.get(pendingRef).pipe(
@@ -220,28 +212,8 @@ export const make = Effect.gen(function* () {
           }
         }),
       );
-
-      yield* Effect.forkScoped(
-        Effect.gen(function* () {
-          for (let attempt = 0; attempt < 120; attempt += 1) {
-            const pending = yield* Ref.get(pendingRef);
-            if (Option.isNone(pending)) {
-              if (attempt >= 20) {
-                return;
-              }
-            } else {
-              yield* flush.pipe(Effect.ignore({ log: true }));
-            }
-            yield* Effect.sleep("500 millis");
-          }
-          const stillPending = yield* Ref.get(pendingRef);
-          if (Option.isSome(stillPending)) {
-            yield* logOpenIntentWarning(
-              "timed out waiting for renderer to acknowledge open-workspace",
-            );
-          }
-        }),
-      );
+      // Повторной доставки нет: рендерер сам забирает отложенный интент через
+      // peek, как только подписывается, а ack его снимает.
     }).pipe(Effect.withSpan("desktop.openIntent.register")),
   });
 });

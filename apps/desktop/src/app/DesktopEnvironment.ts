@@ -82,12 +82,13 @@ export class DesktopEnvironment extends Context.Service<
     readonly branding: DesktopAppBranding;
     readonly displayName: string;
     readonly appUserModelId: string;
+    // A custom app id (local `t3 open` builds, per-checkout dev runs) gets its own
+    // Electron profile, so it never shares the installed app's single-instance lock.
+    readonly customUserDataDirName: Option.Option<string>;
     readonly linuxDesktopEntryName: string;
     readonly linuxWmClass: string;
     readonly linuxApplicationsDir: string;
     readonly appImagePath: Option.Option<string>;
-    readonly userDataDirName: string;
-    readonly legacyUserDataDirName: string;
     readonly defaultDesktopSettings: DesktopAppSettings.DesktopSettings;
     readonly runtimeInfo: DesktopRuntimeInfo;
     readonly resolvePickFolderDefaultPath: (rawOptions: unknown) => Option.Option<string>;
@@ -193,20 +194,6 @@ const make = Effect.fn("desktop.environment.make")(function* (
     config.appUserModelIdOverride,
     () => defaultAppUserModelId,
   );
-  // Custom app ids (local open tooling) must not share Electron userData with the
-  // installed Nightly/Alpha instance — the single-instance lock keys off that path,
-  // and DesktopClerk sets userData before taking it.
-  const usesCustomAppIdentity = appUserModelId !== defaultAppUserModelId;
-  const userDataDirName = usesCustomAppIdentity
-    ? appUserModelId.replaceAll(".", "-")
-    : isDevelopment
-      ? "t3code-dev"
-      : "t3code";
-  const legacyUserDataDirName = usesCustomAppIdentity
-    ? userDataDirName
-    : isDevelopment
-      ? "T3 Code (Dev)"
-      : "T3 Code (Alpha)";
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",
@@ -257,12 +244,14 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId,
+    customUserDataDirName:
+      appUserModelId === defaultAppUserModelId
+        ? Option.none()
+        : Option.some(appUserModelId.replaceAll(".", "-")),
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
     linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
-    userDataDirName,
-    legacyUserDataDirName,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),
     runtimeInfo: resolveDesktopRuntimeInfo({
       platform: input.platform,

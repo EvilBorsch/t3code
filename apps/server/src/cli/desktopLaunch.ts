@@ -1,14 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off - detached Electron launch needs Node child_process/fs/path.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
   serializeDesktopOpenArgs,
   writePendingDesktopOpenWorkspace,
 } from "@t3tools/shared/desktopOpenArgs";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -73,11 +73,10 @@ const resolveDesktopStateDir = (env: NodeJS.ProcessEnv, homeDirectory: string): 
 
 export function listDesktopBinaryCandidates(input: {
   readonly platform: NodeJS.Platform;
-  readonly homeDirectory?: string;
-  readonly env?: NodeJS.ProcessEnv;
+  readonly homeDirectory: string;
+  readonly env: NodeJS.ProcessEnv;
 }): DesktopLaunchCandidate[] {
-  const homeDirectory = input.homeDirectory ?? NodeOS.homedir();
-  const env = input.env ?? process.env;
+  const { homeDirectory, env } = input;
   const candidates: DesktopLaunchCandidate[] = [];
   const seen = new Set<string>();
 
@@ -134,8 +133,8 @@ export function listDesktopBinaryCandidates(input: {
 
 export function resolveDesktopBinaryPath(input: {
   readonly platform: NodeJS.Platform;
-  readonly homeDirectory?: string;
-  readonly env?: NodeJS.ProcessEnv;
+  readonly homeDirectory: string;
+  readonly env: NodeJS.ProcessEnv;
   readonly isExecutable?: (filePath: string) => boolean;
 }): Option.Option<DesktopLaunchCandidate> {
   const isExecutable = input.isExecutable ?? isExecutableFile;
@@ -147,25 +146,32 @@ export function resolveDesktopBinaryPath(input: {
   return Option.none();
 }
 
+/** Looks up the installed desktop app; tests replace it to pin a machine without one. */
+export class DesktopAppResolver extends Context.Reference<typeof resolveDesktopBinaryPath>(
+  "@t3tools/server/cli/DesktopAppResolver",
+  { defaultValue: () => resolveDesktopBinaryPath },
+) {}
+
+export const findInstalledDesktopApp = Effect.gen(function* () {
+  const resolve = yield* DesktopAppResolver;
+  return resolve({
+    platform: yield* HostProcess.Platform,
+    homeDirectory: yield* HostProcess.HomeDirectory,
+    env: yield* HostProcess.Environment,
+  });
+});
+
 export const launchDesktopApp = Effect.fn("launchDesktopApp")(function* (input: {
   readonly workspaceRoot: string;
   readonly newThread?: boolean;
-  readonly homeDirectory?: string;
-  readonly env?: NodeJS.ProcessEnv;
-  readonly spawnDetached?: (candidate: DesktopLaunchCandidate, args: readonly string[]) => void;
 }) {
-  const platform = yield* HostProcessPlatform;
-  const homeDirectory = input.homeDirectory ?? NodeOS.homedir();
-  const env = input.env ?? process.env;
-  const resolveInput = {
-    platform,
-    homeDirectory,
-    env,
-  };
-  const resolved = resolveDesktopBinaryPath(resolveInput);
+  const platform = yield* HostProcess.Platform;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
+  const env = yield* HostProcess.Environment;
+  const resolved = yield* findInstalledDesktopApp;
   if (Option.isNone(resolved)) {
     return yield* new DesktopAppNotFoundError({
-      searchedPaths: listDesktopBinaryCandidates(resolveInput).map(
+      searchedPaths: listDesktopBinaryCandidates({ platform, homeDirectory, env }).map(
         (candidate) => candidate.binaryPath,
       ),
     });
@@ -186,43 +192,28 @@ export const launchDesktopApp = Effect.fn("launchDesktopApp")(function* (input: 
     ...(input.newThread !== undefined ? { newThread: input.newThread } : {}),
   });
 
-  const spawnDetached =
-    input.spawnDetached ??
-    ((candidate, spawnArgs) => {
-      if (platform === "darwin" && candidate.appBundlePath) {
-        const child = NodeChildProcess.spawn(
-          "open",
-          ["-a", candidate.appBundlePath, "--args", ...spawnArgs],
-          {
-            detached: true,
-            stdio: "ignore",
-          },
-        );
-        child.unref();
-        return;
-      }
-
-      const child = NodeChildProcess.spawn(candidate.binaryPath, [...spawnArgs], {
-        detached: true,
-        stdio: "ignore",
-      });
-      child.unref();
-    });
-
+  const { appBundlePath, binaryPath } = resolved.value;
   yield* Effect.try({
     try: () => {
-      spawnDetached(resolved.value, args);
+      const child =
+        platform === "darwin" && appBundlePath
+          ? NodeChildProcess.spawn("open", ["-a", appBundlePath, "--args", ...args], {
+              detached: true,
+              stdio: "ignore",
+            })
+          : NodeChildProcess.spawn(binaryPath, args, { detached: true, stdio: "ignore" });
+      child.unref();
     },
     catch: (cause) =>
       new DesktopAppLaunchError({
-        binaryPath: resolved.value.binaryPath,
+        binaryPath,
         workspaceRoot: input.workspaceRoot,
         cause,
       }),
   });
 
   return {
-    binaryPath: resolved.value.binaryPath,
+    binaryPath,
     label: resolved.value.label,
     workspaceRoot: input.workspaceRoot,
   } as const;

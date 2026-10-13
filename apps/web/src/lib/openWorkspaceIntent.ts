@@ -39,6 +39,7 @@ export async function openWorkspaceInDesktop(input: {
       readonly defaultModelSelection: ModelSelection | null;
     };
   }) => Promise<AtomCommandResult<unknown, unknown>>;
+  readonly waitForProject: (projectRef: ScopedProjectRef) => Promise<unknown>;
   readonly handleNewThread: (projectRef: ScopedProjectRef) => Promise<unknown>;
   readonly expandProject?: (projectRef: ScopedProjectRef) => void;
   readonly onError?: (title: string, description: string) => void;
@@ -81,7 +82,18 @@ export async function openWorkspaceInDesktop(input: {
       }
       return false;
     }
-    projectRef = scopeProjectRef(input.environmentId, projectId);
+    const createdRef = scopeProjectRef(input.environmentId, projectId);
+    // Новый тред берёт настройки проекта из read model, поэтому ждём, пока проект туда попадёт.
+    const projected = await settlePromise(() => input.waitForProject(createdRef));
+    if (projected._tag === "Failure") {
+      const error = squashAtomCommandFailure(projected);
+      input.onError?.(
+        "Failed to open workspace",
+        error instanceof Error ? error.message : "An error occurred.",
+      );
+      return false;
+    }
+    projectRef = createdRef;
   }
 
   input.expandProject?.(projectRef);

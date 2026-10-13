@@ -5,12 +5,14 @@
 > Published as [`EvilBorsch/t3code`](https://github.com/EvilBorsch/t3code). Written so a
 > human or an LLM can continue without reconstructing intent from commits.
 >
-> This file describes the **current** delta only. Features upstream has since absorbed are
-> listed once under _Absorbed by upstream_ so nobody re-adds them.
+> This file describes the **current** delta only. Features upstream has since absorbed, or that
+> its rewrites made obsolete, are listed once under _Absorbed or obsolete_ so nobody re-adds them.
 
-**Sync status 2026-09-28:** merged `origin/main` at `d15210cd3d`, **0 behind / 39 ahead**
-(fork commits + merges). Upstream now ships `DesktopBridge.getPathForFile` itself; the fork's
-duplicate was dropped. Re-check with:
+**Sync status 2026-10-13:** merged `origin/main` at `6524a8d437` (desktop `0.0.45`). This merge
+brought upstream's orchestration V2 rewrite (#2829): the server's V1 `orchestration/` layer is
+gone, providers live in `orchestration-v2/Adapters/*` and `packages/provider-*`, the client read
+model is V2, and the server keeps its state in `statev2.sqlite` (copied once from `state.sqlite`
+on first start; the V1 file is left alone). Re-check with:
 
 ```bash
 git fetch origin main
@@ -18,17 +20,20 @@ git rev-list --left-right --count origin/main...HEAD
 git diff --stat origin/main...HEAD
 ```
 
-**Upstream merge routine:** `git merge origin/main`, resolve, then rebuild and reinstall the
-desktop app (see _Building and installing_). Treat every section below as fork-owned when
-resolving conflicts: never take upstream's side of those files wholesale.
+**Upstream merge routine:** fetch `fork` and `origin`, move onto `fork/fix-claude-usage-master`
+if it is ahead, `git merge origin/main`, resolve, then rebuild and reinstall the desktop app (see
+_Building and installing_). Treat every section below as fork-owned when resolving conflicts:
+never take upstream's side of those files wholesale. Upstream's lint now rejects off-scale
+Tailwind values and restyled `components/ui` exports (`shadcn/no-arbitrary-values`,
+`shadcn/no-restyle`, `shadcn/no-raw-colors`); run `vp lint` on the fork files after every merge.
 
 ---
 
 ## 1. Always-visible usage limits (composer + provider list)
 
-**Why.** Upstream ships the data (`ServerProvider.usageLimits`, `ProviderUsageLimitsIngestion`,
-Usage → Limits, the `/usage-limits` composer command) but shows it only on demand. This fork
-exists to keep spent and remaining quota visible while working.
+**Why.** Upstream ships the data (`ServerProvider.usageLimits`, Usage → Limits, the
+`/usage-limits` composer banner) but shows it only on demand. This fork exists to keep spent
+and remaining quota visible while working.
 
 **What.**
 
@@ -41,11 +46,12 @@ exists to keep spent and remaining quota visible while working.
 - `ProviderUsageMeter.logic.ts` (+ `.test.ts`) — ordering, badges, expiry. A window whose
   reset has passed renders 0% with "waiting for fresh data" instead of a stale number.
   An account that cannot report (`unavailable`) or a failed probe draws nothing.
-- `settings/ProviderInstanceCard.tsx` — the same rings inline on every provider row
+- `settings/ProviderInstanceCard.tsx` — the same rings inline on every enabled provider row
   (`Session · 42% used · resets in 2h 13m`) and a "Usage limits" section in the provider
-  editor built on upstream's `LimitWindows` bars.
+  editor built on upstream's `LimitWindows` bars, placed after upstream's setup section.
 - `ChatComposer.tsx` passes `selectedProviderStatus` into `ComposerFooterPrimaryActions`
-  as `usageProvider`.
+  as `usageProvider`; the meter renders first in that footer. Upstream measures the resting
+  actions' width, so the rings need no reserved padding.
 - Clock is the shared minute tick (`hooks/useNowMinute`), never a per-component timer.
 - Codex can report only a weekly window on some plans (`primary` = 7d, `secondary` null);
   a single `7d` ring is data, not a bug.
@@ -53,11 +59,11 @@ exists to keep spent and remaining quota visible while working.
 
 ## 2. Context window ring always on
 
-Upstream #9190 made `ContextWindowMeter` opt-in behind `contextWindowMeterEnabled`
-(default `false`, a "legacy" toggle), which hid the ring. The fork renders it whenever the
-thread reports a context window:
+Upstream makes `ContextWindowMeter` opt-in behind `contextWindowMeterEnabled` (default `false`,
+"Context window indicator (legacy)"). The fork renders it whenever the thread reports a
+context window:
 
-- `ChatComposer.tsx` — no gate on the setting; `shouldReserveContextWindowMeter` lost its
+- `ChatComposer.tsx` — no gate on the setting; `shouldReserveContextWindowMeter` has no
   `meterEnabled` input (`ContextWindowMeter.logic.ts` + test).
 - `settings/SettingsPanels.tsx`, `settings/settingsSearch.ts` — the toggle row, its search
   entry and its legacy-target id are removed. The contract field stays so stored client
@@ -65,16 +71,19 @@ thread reports a context window:
 
 ## 3. Claude capability probe runs in a neutral directory
 
-`apps/server/src/provider/Drivers/ClaudeDriver.ts` passes `os.tmpdir()` as the probe cwd
-(and cache key) instead of the server cwd. Claude Code scans its working directory on
-initialization; measured: `/tmp` ~0.6s, a project ~0.4s, `$HOME` **~58s**. The desktop
-server's cwd is `$HOME`, so upstream's choice blows the 25s probe budget on every refresh and
-the provider card sticks on _"Could not verify Claude authentication status…"_ while turns
-keep working. `Layers/ClaudeProvider.test.ts` guards the cwd.
+`apps/server/src/provider/Drivers/ClaudeDriver.ts` passes `os.tmpdir()` as the probe cwd, cache
+key and `checkClaudeProviderStatus` cwd instead of the server cwd. Claude Code scans its working
+directory on initialization; measured: `/tmp` ~0.6s, a project ~0.4s, `$HOME` **~58s**. The
+desktop server's cwd is `$HOME`, so upstream's choice blows the probe budget on every refresh and
+the provider card sticks on _"Could not verify Claude authentication status…"_ while turns keep
+working. Guarded by "probes Claude capabilities from the temp directory" in
+`provider/ProviderInstanceRegistry.test.ts`: the fixture Claude binary
+(`provider/testing/ProviderInstanceRegistryLive.fixture.mjs`) records its cwd when
+`T3_CLAUDE_PROBE_CWD_FILE` is set.
 
 `ChatView.tsx` additionally refuses to send when the selected provider reports
-`auth.status === "unauthenticated"` (with the server's message). Upstream's Claude probe no
-longer emits that status, so today this only fires for other providers.
+`auth.status === "unauthenticated"` (with the server's message). Upstream only excludes such
+providers from load balancing.
 
 **Do not regress:** never point the probe at the server cwd. A project directory would be fine.
 
@@ -82,33 +91,42 @@ longer emits that status, so today this only fires for other providers.
 
 - `apps/server/src/terminal/NodePtyAdapter.ts` — resolves `node-pty`'s package dir through
   `app.asar` → `app.asar.unpacked` (and `node_modules.asar` → `.unpacked`) so `spawn-helper`
-  is found; the package.json resolver is injectable for tests.
+  is found. The package.json resolver is injectable through `NodePtyPackageJsonResolverRef`,
+  next to upstream's `NodePtyModuleLoaderRef`. Upstream's desktop now ships a staged runtime,
+  so the rewrite may never fire; it is a no-op unless the path contains `app.asar`.
+- The "make the helper executable" once-guard is keyed by helper path, not one process-wide
+  flag, so adapters with different resolvers each chmod their own helper.
 - `apps/server/src/terminal/Manager.ts` — an `error` event is never treated as a duplicate
   attach snapshot and dropped.
-- The "make the helper executable" once-guard is keyed by helper path, not a single
-  process-wide flag, so adapters with different resolvers (tests, two package roots) each
-  chmod their own helper.
-- Tests in `NodePtyAdapter.test.ts`, `Manager.test.ts`.
+- Tests in `NodePtyAdapter.test.ts` (runs the fake node-pty), `Manager.test.ts`.
 
 ## 5. `t3 .` / `t3 open` → desktop workspace with a new draft thread
 
 **UX.** `t3 .`, `t3 open .`, `t3 open <path>` resolve the directory, find the installed desktop
 app (Nightly → Alpha → `T3 Code`, or `T3CODE_DESKTOP_BINARY` / `T3CODE_DESKTOP_APP`), hand it
-an open-workspace intent, and the renderer creates the project if missing, expands it and
-opens a **new draft** (pencil semantics, no server `thread.create` until first send). With no
-desktop found and no server flags, root `t3` still starts the web server; `t3 start` /
-`t3 serve` stay explicit.
+an open-workspace intent, and the renderer creates the project if missing, waits until it is
+in the read model, expands it and opens a **new draft** (pencil semantics, no server thread
+until first send). `t3 <path>` with no server flag (any flag except `--cwd`) goes to the desktop
+when one is installed; otherwise it falls back to upstream's default server command. Bare `t3`
+always starts the server: dev runners launch it bare and configure it through env, so handing it
+to an installed desktop app broke `vp run dev` (test in `cli/desktopLaunch.test.ts`).
+`t3 start` / `t3 serve` stay explicit.
+
+Upstream's closest feature is `t3 app [path]` (`cli/app.ts`, `DesktopAppActivation`), which only
+works when the desktop app is already running; its "Install `t3` command" settings button only
+puts the bundled server CLI on PATH, and its `t3 ./dir` starts a web server. Rebuilding
+`t3 open` on top of `t3 app` would be a reasonable later simplification.
 
 **Flow.**
 
 ```
 t3 . / t3 open <path>
-  → apps/server/src/cli/open.ts (+ desktopLaunch.ts)
-  → write ~/.t3/userdata/pending-open-workspace.json   (T3CODE_HOME aware)
+  → apps/server/src/binCli.ts → cli/open.ts (+ cli/desktopLaunch.ts)
+  → write $T3CODE_HOME/userdata/pending-open-workspace.json
   → macOS: open -a "<app>.app" --args --open-workspace=<abs> --new-thread
      other: spawn the binary with the same args
   → desktop main: DesktopOpenIntent (argv | second-instance | pending-file)
-  → flush over IPC until the renderer acks
+  → DesktopWindow.dispatchOpenWorkspace (upstream's shared renderer dispatch, reveals the window)
   → DesktopOpenWorkspaceListener → openWorkspaceInDesktop() → project + draft → ack
 ```
 
@@ -120,71 +138,66 @@ Chromium cannot insert switches between flag and value.
 
 **Files.**
 
-| Area          | Paths                                                                                                                                                                                                                                                                              |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Shared        | `packages/shared/src/desktopOpenArgs.ts` (+ test; `./desktopOpenArgs` export in `packages/shared/package.json`) — arg serialize/parse, pending-file read/write/clear                                                                                                               |
-| Contracts     | `packages/contracts/src/ipc.ts` — `DesktopOpenWorkspaceIntent` (`source: argv \| second-instance \| pending-file`), bridge `onOpenWorkspace` / `getPendingOpenWorkspace` / `ackOpenWorkspace`                                                                                      |
-| CLI           | `apps/server/src/cli/open.ts`, `cli/desktopLaunch.ts` (+ test), `bin.ts` — root command prefers desktop unless a server flag (`--mode`, `--port`, `--host`, `--base-dir`, `--dev-url`, `--no-browser`, …) is passed                                                                |
-| Desktop main  | `app/DesktopOpenIntent.ts`, `app/DesktopApp.ts`, `main.ts`, `window/DesktopWindow.ts` (`dispatchOpenWorkspace`), `ipc/channels.ts`, `ipc/methods/window.ts`, `ipc/DesktopIpcHandlers.ts`, `preload.ts`                                                                             |
-| Renderer      | `apps/web/src/lib/openWorkspaceIntent.ts` (+ test), `components/DesktopOpenWorkspaceListener.tsx`, mounted from `AppSidebarLayout.tsx`                                                                                                                                             |
-| Identity      | `app/DesktopEnvironment.ts` (+ test) — a custom `T3CODE_DESKTOP_APP_USER_MODEL_ID` gets its own userData dir (`com-t3tools-t3code-local-open`), so a local rebuild never fights the installed app's single-instance lock                                                           |
-| Local scripts | `scripts/t3-local.sh` (the `/opt/homebrew/bin/t3` symlink target; execs `apps/server/dist/bin.mjs`, unsets `T3CODE_DESKTOP_BINARY` unless `T3CODE_USE_LOCAL_DESKTOP=1`), `scripts/t3-code-desktop-local.mjs` (launch the rebuilt Alpha with an isolated bundle id, debugging only) |
+| Area          | Paths                                                                                                                                                                                                                                                                                                        |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Shared        | `packages/shared/src/desktopOpenArgs.ts` (+ test; `./desktopOpenArgs` export in `packages/shared/package.json`) — arg serialize/parse, pending-file read/write/clear                                                                                                                                         |
+| Contracts     | `packages/contracts/src/ipc.ts` — `DesktopOpenWorkspaceIntent` (`source: argv \| second-instance \| pending-file`), bridge `onOpenWorkspace` / `getPendingOpenWorkspace` / `ackOpenWorkspace`                                                                                                                |
+| CLI           | `apps/server/src/binCli.ts` (root command), `cli/open.ts`, `cli/desktopLaunch.ts` (+ test; `DesktopAppResolver` reference so tests never launch the real app — upstream's `cli/app.test.ts` pins "no desktop installed")                                                                                     |
+| Desktop main  | `app/DesktopOpenIntent.ts`, `app/DesktopApp.ts`, `main.ts`, `window/DesktopWindow.ts`, `ipc/channels.ts`, `ipc/methods/window.ts`, `ipc/DesktopIpcHandlers.ts`, `preload.ts`                                                                                                                                 |
+| Renderer      | `apps/web/src/lib/openWorkspaceIntent.ts` (+ test), `components/DesktopOpenWorkspaceListener.tsx` (subscribes once the primary environment is connected), mounted from `AppSidebarLayout.tsx`                                                                                                                |
+| Identity      | `app/DesktopEnvironment.ts` exposes `customUserDataDirName` for a custom `T3CODE_DESKTOP_APP_USER_MODEL_ID`; `app/DesktopUserData.ts` puts that build in `<appData>/<name>` (e.g. `com-t3tools-t3code-local-open`), so a local rebuild never fights the installed app's single-instance lock. Tests in both. |
+| Local scripts | `scripts/t3-local.sh` (the `/opt/homebrew/bin/t3` symlink target; execs `apps/server/dist/bin.mjs`, unsets `T3CODE_DESKTOP_BINARY` unless `T3CODE_USE_LOCAL_DESKTOP=1`), `scripts/t3-code-desktop-local.mjs` (launch the rebuilt app with an isolated bundle id, debugging only)                             |
 
 **Pitfalls.**
 
-1. The installed app must be built from this branch: a stock Nightly ignores
+1. The installed app must be built from this branch: a stock build ignores
    `--open-workspace` and never reads the pending file.
 2. Never hand-edit an installed `.app` (`Info.plist`, `app.asar`) — that broke launches once.
    Reinstall from the built zip.
-3. The pending-intent ack exists for the cold-start race where IPC fires before React mounts.
-   Do not remove peek/ack without a replacement.
+3. The pending-intent ack exists for the cold-start race where IPC fires before React mounts:
+   the renderer pulls the intent with `getPendingOpenWorkspace` once its listener subscribes, and
+   `ack` clears it. Desktop main does not resend on a timer; a resend loop revealed the window
+   every 500ms while the backend booted. Do not remove peek/ack without a replacement.
 4. Do not reuse the server's `autoBootstrapProjectFromCwd` for this; different semantics.
+5. With a desktop app installed, `t3 ./missing-dir` fails with "not a directory" instead of
+   creating it, unlike upstream's documented `t3 <path>`.
 
-## 6. Timeline ergonomics (turn folds)
+## 6. Turn-fold prompt preview
 
-- Each "Worked for …" fold row carries `userPromptPreview` (preceding prompt, whitespace
-  collapsed, ≤140 chars) and `userMessageId`. The preview is a button that scrolls to the
-  prompt; collapsing a fold also scrolls back to its prompt, since a long turn leaves the
-  viewport on the final reply.
-- Changed-file trees auto-expand only when small (`CHANGED_FILES_DEFAULT_EXPAND_MAX = 12`).
-- `chat/MessagesTimeline.tsx`, `MessagesTimeline.logic.ts` (+ test).
-
-## 7. Warm thread cache healing
-
-`packages/client-runtime/src/state/threads.ts` — `isReusableThreadDetailCache`: a cached
-snapshot with assistant output or a settled turn but **no user message** lost its prompt
-(warm caches resume via `afterSequence`, so the `thread.message-sent` event can never come
-back). Such a cache is deleted and the thread reloaded instead of rendering one-sided. A
-still-running turn without messages is an early state, not corruption. Tests:
-`threadCache.test.ts`, `threads-sync.test.ts`, `threads-pagination.test.ts`.
+Upstream's V2 timeline folds each response by `runId`. When a user message starts the
+response, the fold row carries `userPromptPreview` (whitespace collapsed, ≤140 chars) and
+`userMessageId`; both are null when a notification starts it. The preview is a button that
+scrolls to the prompt, and collapsing a fold scrolls back to its prompt (decided in
+`TurnFoldTimelineRow` from `row.expanded`), since a long turn leaves the viewport on the final
+reply. `chat/MessagesTimeline.tsx`, `MessagesTimeline.logic.ts` (+ test).
 
 ## 8. Sidebar follows the open thread
 
-`Sidebar.logic.ts` — `useRevealActiveThreadRow(routeThreadKey)` scrolls the active thread's
-row into view on route change (search and the command palette can land anywhere). Wired in
-both `Sidebar.tsx` and `LegacySidebar.tsx` via `data-thread-key`; the legacy sidebar also
-keeps the open thread visible as the only row of a collapsed project.
+`Sidebar.logic.ts` — `useRevealActiveThreadRow(routeThreadKey)` scrolls the active thread's row
+into view on route change, and `requestSidebarThreadReveal` does the same after a command-palette
+selection (`CommandPalette.tsx` also clears the project scope and expands the target project).
+Rows are found by upstream's `data-thread-item={threadKey}` attribute, which `LegacySidebar.tsx`
+now sets too; upstream's motion clones drop it, so a row animating out is never the target. The
+legacy sidebar also keeps the open thread visible as the only row of a collapsed project, and
+beyond the preview count of an expanded one. Test: `Sidebar.reveal.test.tsx`.
 
 ## 9. Composer OS file drop → path mentions
 
-`chat/composerFileDrop.ts` (+ test) — `planComposerFileDrop`: a dropped file whose absolute
-path the desktop bridge can resolve becomes an `@` path mention; images, browser drops and
-path-less files go through upstream's `addComposerAttachments`. `DesktopBridge.getPathForFile?`
-in `packages/contracts/src/ipc.ts` + `preload.ts` (Electron `webUtils.getPathForFile`,
-`undefined` in browsers). Wired in `ChatComposer.tsx`.
+`chat/composerFileDrop.ts` (+ test) — `planComposerFileDrop`: in a **local** environment
+(upstream's `folderDropTarget(...) === "local"`), a dropped file whose absolute path the desktop
+bridge resolves (`DesktopBridge.getPathForFile`, upstream's) becomes an `@` path mention. Images,
+browser drops, path-less files and every drop into a remote environment go through upstream's
+attachments. Upstream's own `addDroppedFolders` handles folders. Wired in `ChatComposer.tsx`.
 
-## 10. Model reroute notice in the work log
+## 10. Codex model reroute notice in the work log
 
-`apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts` maps the `model.rerouted`
-runtime event (Claude safety fallback Fable → Opus, Codex `model/rerouted`) to an info
-activity: _"Model switched: claude-fable-5 → claude-opus-5 (refusal:cyber)"_. Upstream
-emits the event but dropped it in ingestion. Test:
-`ProviderRuntimeIngestion.modelRerouted.test.ts`. Known gap: `retracted_message_uuids` are not
-processed, so a refused partial answer can stay visible.
-
-The same file namespaces assistant segment message ids by `turn:` so a `session/load` replay
-cannot collide with a live turn; `acp/AcpSessionRuntime.ts` exports `assistantItemId` for its
-test (`AcpSessionRuntime.assistantItemId.test.ts`).
+`apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts` — the `model/rerouted` handler
+still updates the subagent model selection (upstream), then attaches a completed
+`system_notice` turn item to the active turn: _"Model switched: gpt-x → gpt-y
+(highRiskCyberActivity)"_. No active turn (child or finished turn) → nothing is shown. Test:
+"shows a model reroute in the turn's work log" in `CodexAdapterV2.test.ts`. Claude's
+`model_refusal_fallback` notice is upstream's. Known gap: Claude `retracted_message_uuids` are
+not processed, so a refused partial answer can stay visible.
 
 ## 11. Syntax highlighter engine claim
 
@@ -195,7 +208,9 @@ create it on the JS engine and stall the chat. Test: `syntaxHighlighting.engine.
 
 ## 12. Agent browser access off by default
 
-`packages/contracts/src/settings.ts` — `enableAgentBrowserAccess` defaults to `false`.
+`packages/contracts/src/settings.ts` — `enableAgentBrowserAccess` defaults to `false`. Upstream
+lists the same MCP tools for every session and refuses `preview_*` calls at call time, so agents
+can still see browser tools they cannot use (see _Absorbed or obsolete_, MCP catalogs).
 
 ## 13. Local macOS build signing
 
@@ -206,6 +221,15 @@ for unsigned mac builds, that ad-hoc signs the bundle. The ad-hoc cdhash changes
 macOS asks once per install; `T3CODE_DESKTOP_LOCAL_SIGN_IDENTITY=<self-signed cert>` gives an
 identity that survives rebuilds. Documented in `docs/operations/development.md`.
 
+## 14. Providers refresh when a chat opens
+
+`apps/web/src/hooks/useChatProviderRefresh.ts` (wired in `ChatView.tsx`) and
+`apps/mobile/src/features/threads/use-chat-provider-refresh.ts` (wired in `ThreadRouteScreen.tsx`
+and `NewTaskDraftScreen.tsx`), + tests — once per opened chat, after the environment connects,
+refresh every provider with `refreshModels: true`, so a provider that recovered (logged in,
+updated CLI) becomes selectable without a trip to Settings. Upstream refreshes only the selected
+instance's stale workspace snapshot (web) or on pull-to-refresh in the model picker (mobile).
+
 ## Non-product files in the delta
 
 - `README.md` — fork section.
@@ -214,17 +238,21 @@ identity that survives rebuilds. Documented in `docs/operations/development.md`.
 
 ---
 
-## Absorbed by upstream (do not re-add)
+## Absorbed or obsolete (do not re-add)
 
-| Former fork feature                                                                                              | Upstream now                                                                                                      |
-| ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Usage-limit **data** path (`providerUsage.ts`, `ProviderUsageMonitor`, registry overlay, `ServerProvider.usage`) | `ServerProvider.usageLimits`, `ProviderUsageLimitsIngestion`, Limits tab (#9507). Only the UI in §1 is fork code. |
-| Thread message search (FTS5 migration, `searchThreads` RPC, palette)                                             | Upstream `searchThreads` in `ws.ts`. No fork code remains.                                                        |
-| Claude `model_refusal_fallback` handling in `ClaudeAdapter`                                                      | Upstream handles the SDK message; the fork keeps only the ingestion mapping (§10).                                |
-| Hard-coded Claude catalog (Opus 5 / xhigh)                                                                       | Remote model manifest (#9084).                                                                                    |
-| Claude logged-out detection (`unauthenticated` status)                                                           | Upstream's `apiProvider` model; a logged-out Claude reports `ready`. See follow-ups.                              |
-| `ProviderStatusBanner` preferring the server message                                                             | Upstream does the same.                                                                                           |
-| Assistant item id namespacing in `AcpSessionRuntime`                                                             | Upstream landed the same fix; only the export + test remain.                                                      |
+| Former fork feature                                                                                              | Upstream now                                                                                                                                                                                                                         |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Usage-limit **data** path (`providerUsage.ts`, `ProviderUsageMonitor`, registry overlay, `ServerProvider.usage`) | `ServerProvider.usageLimits`, `ProviderUsageLimitsIngestion`, Limits tab (#9507). Only the UI in §1 is fork code.                                                                                                                    |
+| Thread message search (FTS5 migration, `searchThreads` RPC, palette)                                             | Upstream `searchThreads`, in-thread find (`mod+f`). No fork code remains; the live DB's migration ledger matches upstream.                                                                                                           |
+| Claude `model_refusal_fallback` handling and its work-log notice                                                 | `ClaudeAdapterV2` emits a `system_notice` itself. The V1 `ProviderRuntimeIngestion` mapping was deleted with V1.                                                                                                                     |
+| Hard-coded Claude catalog (Opus 5 / xhigh)                                                                       | Remote model manifest (#9084).                                                                                                                                                                                                       |
+| Claude logged-out detection (`unauthenticated` status)                                                           | Upstream's `apiProvider` model; a logged-out Claude reports `ready`. See follow-ups.                                                                                                                                                 |
+| `ProviderStatusBanner` preferring the server message                                                             | Upstream does the same.                                                                                                                                                                                                              |
+| Assistant item id namespacing (`AcpSessionRuntime` export + test, "empty Cursor replies after `session/load`")   | `packages/provider-acp` namespaces ids per runtime and blocks `session/load` replay; the V2 ACP adapter scopes ids by turn; Cursor now runs on the Cursor SDK.                                                                       |
+| Warm thread cache healing (`isReusableThreadDetailCache`)                                                        | V2 client cache is schema-versioned (`ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION`) and drops undecodable entries; bounded windows persist with their cursor, so "no user message" is a valid state. Fix corruption by a version bump. |
+| Changed-files tree auto-expand (≤12 files)                                                                       | Upstream's `ChangedFilesCard` remembers its own expanded state and starts collapsed.                                                                                                                                                 |
+| Context-ring padding (`pr-28/pr-20/pr-12`)                                                                       | Upstream measures the composer's resting actions width.                                                                                                                                                                              |
+| MCP tool catalogs per session capability (fa65fe8b78)                                                            | Per-request caller isolation is upstream's (Effect's toolkit strips request services). Hiding tools from `tools/list` was dropped: upstream keeps one list and refuses calls at call time (`McpToolAccess`).                         |
 
 ---
 
@@ -241,32 +269,35 @@ rm -rf "/Applications/T3 Code (Nightly).app" && mv "/tmp/t3-install/T3 Code (Nig
 Rebuilds web + server + desktop, so `t3` (symlink → `scripts/t3-local.sh` →
 `apps/server/dist/bin.mjs`) updates with it. Never keep a second `.app` copy around: same bundle
 id, and macOS TCC ping-pongs folder prompts between them. The previous zip in `release/` is
-the rollback.
+the rollback; a V2 build's data lives in `statev2.sqlite`, so rolling back to a V1 build reads the
+untouched `state.sqlite` and misses everything done since.
 
 ## How to validate
 
 ```bash
-# web
+# web (LANG=en_US.UTF-8: some upstream sidebar tests assert English weekday names)
 cd apps/web && vp test run \
   src/components/chat/ProviderUsageMeter.logic.test.ts \
   src/components/chat/ContextWindowMeter.logic.test.ts \
   src/components/chat/MessagesTimeline.logic.test.ts \
   src/components/chat/composerFileDrop.test.ts \
+  src/components/Sidebar.reveal.test.tsx \
+  src/hooks/useChatProviderRefresh.test.tsx \
   src/lib/openWorkspaceIntent.test.ts \
   src/lib/syntaxHighlighting.engine.test.ts --project unit
 cd apps/web && vp run typecheck
 
 # server
 cd apps/server && vp test run \
-  src/provider/Layers/ClaudeProvider.test.ts \
+  src/provider/ProviderInstanceRegistry.test.ts \
   src/terminal/NodePtyAdapter.test.ts src/terminal/Manager.test.ts \
-  src/cli/desktopLaunch.test.ts \
-  src/orchestration/Layers/ProviderRuntimeIngestion.modelRerouted.test.ts
+  src/cli/desktopLaunch.test.ts src/cli/app.test.ts \
+  src/orchestration-v2/Adapters/CodexAdapterV2.test.ts
 
-# shared / client-runtime / desktop / scripts
+# shared / desktop / mobile / scripts
 cd packages/shared && vp test run src/desktopOpenArgs.test.ts
-cd packages/client-runtime && vp test run src/state/threadCache.test.ts
-cd apps/desktop && vp test run src/app/DesktopEnvironment.test.ts
+cd apps/desktop && vp test run src/app/DesktopEnvironment.test.ts src/app/DesktopUserData.test.ts
+cd apps/mobile && vp test run --config ../../vite.config.ts --dir . src/features/threads/use-chat-provider-refresh.test.tsx
 vp test run scripts/sign-macos-local.test.ts
 
 # manual
@@ -278,11 +309,23 @@ t3 start --no-browser         # explicit server still works
 ## Follow-ups (not done)
 
 - **Fail-fast capability caching.** `ClaudeDriver.ts` uses upstream's `Cache.make` with a flat
-  5-minute TTL, so a failed probe is cached for the full window and any probe regression
-  presents as a sticky error. The pre-merge `Cache.makeWith` expired failures immediately.
+  TTL, so a failed probe is cached for the full window and any probe regression presents as a
+  sticky error.
 - **Logged-out Claude.** Upstream reports a logged-out Claude as `ready`; re-adding an
   `unauthenticated` status needs a rule that does not mislabel Bedrock.
-- Model reroute: process `retracted_message_uuids` (§10).
+- Claude reroute: process `retracted_message_uuids` (§10).
 - Usage rings on mobile.
-- Ship the open-workspace desktop code in a real release, or a `t3` shim from the installer,
-  so `t3 .` works without building from this checkout.
+- **Provider refresh cost (§14).** `refreshModels: true` on every chat open forces a manifest
+  refresh and probes every provider, also when a draft turns into a thread on first send. An
+  untargeted refresh without `refreshModels` still refreshes auth and usage; consider that plus a
+  per-environment throttle.
+- **Sidebar reveal observer (§8)** lives for the whole route when the row never appears (thread
+  filtered out by project scope, empty draft, collapsed sidebar); cap it at ~2s.
+- **Pending-file poll (§5)** reads the state dir every 750ms for the app's lifetime; an
+  `fs.watch` or a poll bounded to `activate`/`second-instance` would do.
+- `t3 open` writes the pending file under the shell's `$T3CODE_HOME`; an app started by Launch
+  Services does not see that variable, so the hand-off silently does nothing when it is set.
+- Turn-fold preview (§6) shows mentions as raw `[name](/abs/path)` markdown.
+- The unauthenticated send gate (§3) checks only the primary model selection.
+- Rebuild `t3 open` on upstream's `t3 app` activation, and ship it in a real release, so `t3 .`
+  works without building from this checkout.

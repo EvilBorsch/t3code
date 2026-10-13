@@ -1,5 +1,5 @@
-import type { DesktopOpenWorkspaceIntent } from "@t3tools/contracts";
-import { useEffect, useRef } from "react";
+import type { DesktopOpenWorkspaceIntent, EnvironmentId } from "@t3tools/contracts";
+import { useEffect, useEffectEvent, useRef } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 
@@ -11,7 +11,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { openWorkspaceInDesktop } from "../lib/openWorkspaceIntent";
-import { useProjects } from "../state/entities";
+import { readProject, readProjects, waitForProject } from "../state/entities";
 import { primaryServerProvidersAtom } from "../state/server";
 import { usePrimaryEnvironment } from "../state/environments";
 import { projectEnvironment } from "../state/projects";
@@ -21,93 +21,60 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 
 export function DesktopOpenWorkspaceListener() {
   const primaryEnvironment = usePrimaryEnvironment();
-  const projects = useProjects();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const handleNewThread = useNewThreadHandler();
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
-  const projectsRef = useRef(projects);
-  const providersRef = useRef(providers);
-  const primaryEnvironmentRef = useRef(primaryEnvironment);
-  const handleNewThreadRef = useRef(handleNewThread);
-  const createProjectRef = useRef(createProject);
-  const projectGroupingSettingsRef = useRef(projectGroupingSettings);
   const inFlightKeyRef = useRef<string | null>(null);
+  const environmentId =
+    primaryEnvironment?.connection.phase === "connected" ? primaryEnvironment.environmentId : null;
 
-  projectsRef.current = projects;
-  providersRef.current = providers;
-  primaryEnvironmentRef.current = primaryEnvironment;
-  handleNewThreadRef.current = handleNewThread;
-  createProjectRef.current = createProject;
-  projectGroupingSettingsRef.current = projectGroupingSettings;
+  const openIntent = useEffectEvent(
+    (intent: DesktopOpenWorkspaceIntent, targetEnvironmentId: EnvironmentId) =>
+      openWorkspaceInDesktop({
+        intent,
+        environmentId: targetEnvironmentId,
+        projects: readProjects(),
+        providers,
+        createProject,
+        waitForProject,
+        handleNewThread,
+        expandProject: (projectRef) => {
+          const project = readProject(projectRef);
+          const projectKey = project
+            ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
+            : `${projectRef.environmentId}:${projectRef.projectId}`;
+          useUiStateStore.getState().setProjectExpanded(projectKey, true);
+        },
+        onError: (title, description) => {
+          toastManager.add(stackedThreadToast({ type: "error", title, description }));
+        },
+      }),
+  );
 
   useEffect(() => {
-    if (!isElectron) {
-      return;
-    }
-    const bridge = window.desktopBridge;
-    if (!bridge?.onOpenWorkspace || !bridge.getPendingOpenWorkspace || !bridge.ackOpenWorkspace) {
+    const bridge = isElectron ? window.desktopBridge : undefined;
+    if (
+      environmentId === null ||
+      !bridge?.onOpenWorkspace ||
+      !bridge.getPendingOpenWorkspace ||
+      !bridge.ackOpenWorkspace
+    ) {
       return;
     }
 
     let cancelled = false;
-
-    const intentKey = (intent: DesktopOpenWorkspaceIntent) =>
-      `${intent.source}:${intent.workspaceRoot}:${intent.newThread ? "1" : "0"}`;
-
+    // Интент может прийти дважды: событием и через getPendingOpenWorkspace при подписке.
     const handleIntent = async (intent: DesktopOpenWorkspaceIntent) => {
-      const key = intentKey(intent);
+      const key = `${intent.source}:${intent.workspaceRoot}:${intent.newThread ? "1" : "0"}`;
       if (inFlightKeyRef.current === key) {
         return;
       }
-
-      const waitForEnvironment = async () => {
-        for (let attempt = 0; attempt < 40; attempt += 1) {
-          if (cancelled) return null;
-          const environment = primaryEnvironmentRef.current;
-          if (environment) return environment;
-          await new Promise((resolve) => setTimeout(resolve, 250));
-        }
-        return null;
-      };
-
-      const environment = await waitForEnvironment();
-      if (!environment || cancelled) {
-        return;
-      }
-
       inFlightKeyRef.current = key;
       try {
-        await openWorkspaceInDesktop({
-          intent,
-          environmentId: environment.environmentId,
-          projects: projectsRef.current,
-          providers: providersRef.current,
-          createProject: createProjectRef.current,
-          handleNewThread: handleNewThreadRef.current,
-          expandProject: (projectRef) => {
-            const project = projectsRef.current.find(
-              (candidate) =>
-                candidate.id === projectRef.projectId &&
-                candidate.environmentId === projectRef.environmentId,
-            );
-            const projectKey = project
-              ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettingsRef.current)
-              : `${projectRef.environmentId}:${projectRef.projectId}`;
-            useUiStateStore.getState().setProjectExpanded(projectKey, true);
-          },
-          onError: (title, description) => {
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title,
-                description,
-              }),
-            );
-          },
-        });
+        await openIntent(intent, environmentId);
         await bridge.ackOpenWorkspace();
       } finally {
         if (inFlightKeyRef.current === key) {
@@ -119,7 +86,6 @@ export function DesktopOpenWorkspaceListener() {
     const unsubscribe = bridge.onOpenWorkspace((intent) => {
       void handleIntent(intent);
     });
-
     void bridge.getPendingOpenWorkspace().then((pending) => {
       if (pending && !cancelled) {
         void handleIntent(pending);
@@ -128,9 +94,9 @@ export function DesktopOpenWorkspaceListener() {
 
     return () => {
       cancelled = true;
-      unsubscribe?.();
+      unsubscribe();
     };
-  }, []);
+  }, [environmentId]);
 
   return null;
 }

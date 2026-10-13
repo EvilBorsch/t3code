@@ -3,7 +3,7 @@ import * as NodeNet from "node:net";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -16,7 +16,7 @@ import * as Scheduler from "effect/Scheduler";
 import { expect, vi } from "vite-plus/test";
 
 import * as NodePtyAdapter from "./NodePtyAdapter.ts";
-import * as PtyAdapter from "./PtyAdapter.ts";
+import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
 function makeNativeProcess(pid = 42) {
   const events = new NodeEvents.EventEmitter();
@@ -63,19 +63,19 @@ const spawnInput = { shell: "powershell.exe", cwd: ".", cols: 80, rows: 24, env:
 
 const fakeNodePty = { spawn } as unknown as typeof import("node-pty");
 
-const makeTestLayer = (platform: NodeJS.Platform = "win32") =>
+const layerTestFor = (platform: NodeJS.Platform = "win32") =>
   NodePtyAdapter.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         NodeServices.layer,
-        Layer.succeed(HostProcessPlatform, platform),
-        Layer.succeed(HostProcessArchitecture, "x64"),
+        Layer.succeed(HostProcess.Platform, platform),
+        Layer.succeed(HostProcess.Architecture, "x64"),
         Layer.succeed(NodePtyAdapter.NodePtyModuleLoaderRef, () => Promise.resolve(fakeNodePty)),
       ),
     ),
   );
 
-const testLayer = makeTestLayer();
+const layerTest = layerTestFor();
 
 it.effect("waits for the Windows PID without requiring output", () =>
   Effect.gen(function* () {
@@ -109,11 +109,12 @@ it.effect("waits for the Windows PID without requiring output", () =>
     assert.deepEqual(exits, [{ exitCode: 0, signal: null }]);
     stopData();
     stopExit();
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
-for (const failure of ["exit", "close", "error", "invalid-pid"] as const) {
-  it.effect(`fails Windows startup on ${failure} and cleans up`, () =>
+it.effect.each(["exit", "close", "error", "invalid-pid"] as const)(
+  "fails Windows startup on %s and cleans up",
+  (failure) =>
     Effect.gen(function* () {
       const { nativeProcess, subscribed } = preparePendingProcess();
       const adapter = yield* PtyAdapter.PtyAdapter;
@@ -130,9 +131,8 @@ for (const failure of ["exit", "close", "error", "invalid-pid"] as const) {
       assert.equal(nativeProcess._socket.listenerCount("close"), 0);
       assert.equal(nativeProcess.events.listenerCount("exit"), 0);
       assert.equal(nativeProcess._agent.kill.mock.calls.length, 1);
-    }).pipe(Effect.provide(testLayer)),
-  );
-}
+    }).pipe(Effect.provide(layerTest)),
+);
 
 it.effect("cancels the Windows connection without waiting for output", () =>
   Effect.gen(function* () {
@@ -145,7 +145,7 @@ it.effect("cancels the Windows connection without waiting for output", () =>
     assert.equal(nativeProcess.kill.mock.calls.length, 0);
     assert.equal(nativeProcess._socket.listenerCount("ready_datapipe"), 0);
     assert.equal(nativeProcess.events.listenerCount("exit"), 0);
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("reports an incompatible Windows readiness API instead of hanging", () =>
@@ -159,11 +159,12 @@ it.effect("reports an incompatible Windows readiness API instead of hanging", ()
     assert.instanceOf(error.cause, Error);
     assert.equal(error.cause.message, "Windows PTY readiness socket is unavailable.");
     assert.equal(nativeProcess._agent.kill.mock.calls.length, 1);
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
-for (const platform of ["win32", "linux", "darwin"] as const) {
-  it.effect(`terminates through node-pty using ${platform} semantics`, () =>
+it.effect.each(["win32", "linux", "darwin"] as const)(
+  "terminates through node-pty using %s semantics",
+  (platform) =>
     Effect.gen(function* () {
       const adapter = yield* PtyAdapter.PtyAdapter;
       const process = yield* adapter.spawn({
@@ -190,9 +191,8 @@ for (const platform of ["win32", "linux", "darwin"] as const) {
           ? [[undefined], [undefined], [undefined]]
           : [["SIGTERM"], ["SIGKILL"], [undefined]],
       );
-    }).pipe(Effect.provide(makeTestLayer(platform))),
-  );
-}
+    }).pipe(Effect.provide(layerTestFor(platform))),
+);
 
 it.effect("spawns through the public adapter with the provided host references", () =>
   Effect.gen(function* () {
@@ -220,7 +220,7 @@ it.effect("spawns through the public adapter with the provided host references",
         name: "xterm-256color",
       },
     ]);
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("preserves a caller-provided TERM in the spawn env on win32", () =>
@@ -247,7 +247,7 @@ it.effect("preserves a caller-provided TERM in the spawn env on win32", () =>
         name: "xterm-256color",
       },
     ]);
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("reports native module load failures as structured startup defects", () =>
@@ -274,8 +274,8 @@ it.effect("reports native module load failures as structured startup defects", (
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
-        Layer.succeed(HostProcessPlatform, "win32"),
-        Layer.succeed(HostProcessArchitecture, "x64"),
+        Layer.succeed(HostProcess.Platform, "win32"),
+        Layer.succeed(HostProcess.Architecture, "x64"),
       ),
     ),
   ),
@@ -306,17 +306,10 @@ it.effect("makes the unpacked Electron spawn helper executable", () =>
     yield* fs.writeFileString(helperPath, "spawn helper");
     yield* fs.chmod(helperPath, 0o644);
 
-    const adapter = yield* NodePtyAdapter.make(
-      () => import("node-pty"),
-      () => packageJsonPath,
+    const adapter = yield* NodePtyAdapter.make().pipe(
+      Effect.provideService(NodePtyAdapter.NodePtyPackageJsonResolverRef, () => packageJsonPath),
     );
-    yield* adapter.spawn({
-      shell: "/bin/sh",
-      cwd: tempDir,
-      cols: 80,
-      rows: 24,
-      env: {},
-    });
+    yield* adapter.spawn({ ...spawnInput, shell: "/bin/sh" });
 
     const helperInfo = yield* fs.stat(helperPath);
     assert.equal(helperInfo.mode & 0o777, 0o755);
@@ -324,15 +317,17 @@ it.effect("makes the unpacked Electron spawn helper executable", () =>
     Effect.provide(
       Layer.mergeAll(
         NodeServices.layer,
-        Layer.succeed(HostProcessPlatform, "darwin"),
-        Layer.succeed(HostProcessArchitecture, "arm64"),
+        Layer.succeed(HostProcess.Platform, "darwin"),
+        Layer.succeed(HostProcess.Architecture, "arm64"),
+        Layer.succeed(NodePtyAdapter.NodePtyModuleLoaderRef, () => Promise.resolve(fakeNodePty)),
       ),
     ),
   ),
 );
 
-for (const budget of [2048, 8]) {
-  it.effect(`preserves an exit during readiness handoff with scheduler budget ${budget}`, () =>
+it.effect.each([2048, 8])(
+  "preserves an exit during readiness handoff with scheduler budget %s",
+  (budget) =>
     Effect.gen(function* () {
       const { nativeProcess, subscribed } = preparePendingProcess();
       const adapter = yield* PtyAdapter.PtyAdapter;
@@ -351,9 +346,8 @@ for (const budget of [2048, 8]) {
       nativeProcess.events.emit("exit", { exitCode: 0 });
       yield* Fiber.join(fiber);
       assert.equal(exits.length, 1);
-    }).pipe(Effect.provide(testLayer)),
-  );
-}
+    }).pipe(Effect.provide(layerTest)),
+);
 
 it.effect("replays an exit to late subscribers and respects unsubscription", () =>
   Effect.gen(function* () {
@@ -369,11 +363,12 @@ it.effect("replays an exit to late subscribers and respects unsubscription", () 
     assert.equal(removed.mock.calls.length, 0);
     assert.deepEqual(late.mock.calls, [[{ exitCode: 7, signal: 2 }]]);
     assert.equal(nativeProcess.events.listenerCount("exit"), 0);
-  }).pipe(Effect.provide(testLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
-for (const failure of ["spawn", "interrupt"] as const) {
-  it.effect(`logs cleanup failures without replacing ${failure}`, () =>
+it.effect.each(["spawn", "interrupt"] as const)(
+  "logs cleanup failures without replacing %s",
+  (failure) =>
     Effect.gen(function* () {
       const { nativeProcess, subscribed } = preparePendingProcess();
       const killError = new Error("native kill failed");
@@ -412,6 +407,5 @@ for (const failure of ["spawn", "interrupt"] as const) {
       ]);
       assert.equal(nativeProcess.events.listenerCount("exit"), 0);
       assert.equal(nativeProcess._socket.listenerCount("ready_datapipe"), 0);
-    }).pipe(Effect.provide(testLayer)),
-  );
-}
+    }).pipe(Effect.provide(layerTest)),
+);
