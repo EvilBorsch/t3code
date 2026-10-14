@@ -79,7 +79,12 @@ const mcpRules = (name: string) => [
   { action: "t3-code-*", resource: "*", effect: "deny" },
   { action: `t3-code-thread_${name}_*`, resource: "*", effect: "allow" },
 ];
-const FULL_ACCESS = [{ action: "*", resource: "*", effect: "allow" }];
+const FULL_ACCESS = [
+  { action: "*", resource: "*", effect: "allow" },
+  // OpenCode's default agent asks for `external_directory`, which `*` does not
+  // cover, so full access allows it explicitly.
+  { action: "external_directory", resource: "*", effect: "allow" },
+];
 /** Full access for the thread named `name`. */
 const t3Rules = (name: string) => [...FULL_ACCESS, ...mcpRules(name)];
 /** Paths the build and plan agents allow for themselves, as 2.0.18 lists them. */
@@ -146,6 +151,7 @@ const autoEditRules = (name: string) => [
 /** Plan mode on Full access: edits are denied except the plan agent's own plan files. */
 const planRules = (name: string) => [
   { action: "*", resource: "*", effect: "allow" },
+  { action: "external_directory", resource: "*", effect: "allow" },
   { action: "edit", resource: "*", effect: "deny" },
   ...PLAN_PATHS,
   ...mcpRules(name),

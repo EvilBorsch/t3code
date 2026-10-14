@@ -504,7 +504,12 @@ const sessionRules = (
   mcpServerName: string | null,
 ): ReadonlyArray<Rule> => [
   ...(policy.runtimeMode === "full-access"
-    ? [rule("*", "allow")]
+    ? [
+        rule("*", "allow"),
+        // OpenCode's default agent sets `external_directory` to ask, which the
+        // `*` rule does not cover, so full access must allow it explicitly.
+        rule("external_directory", "allow"),
+      ]
     : [
         rule("shell", "ask"),
         rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),

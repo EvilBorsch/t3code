@@ -8,7 +8,7 @@
 > This file describes the **current** delta only. Features upstream has since absorbed, or that
 > its rewrites made obsolete, are listed once under _Absorbed or obsolete_ so nobody re-adds them.
 
-**Sync status 2026-10-13:** merged `origin/main` at `6524a8d437` (desktop `0.0.45`). This merge
+**Sync status 2026-10-14:** merged `origin/main` at `6524a8d437` (desktop `0.0.45`). This merge
 brought upstream's orchestration V2 rewrite (#2829): the server's V1 `orchestration/` layer is
 gone, providers live in `orchestration-v2/Adapters/*` and `packages/provider-*`, the client read
 model is V2, and the server keeps its state in `statev2.sqlite` (copied once from `state.sqlite`
@@ -294,6 +294,22 @@ a write reported 5 minutes and the chip appeared after 5 minutes idle while the 
 keep 5 minutes. The memory is not persisted across server restarts. Tests in
 `ClaudeAdapterV2.test.ts` ("prompt cache TTL" scenarios).
 
+## 17. OpenCode full access reaches outside the workspace again
+
+The V2 rewrite dropped a rule the V1 adapter always sent. The full-access branch of
+`sessionRules` in `packages/provider-opencode/src/server/v2/adapter.ts` emitted only
+`{ action: "*", effect: "allow" }`; OpenCode's default `build`/`plan` agents carry an
+`external_directory → ask` rule that the `*` wildcard does not cover, so full access was
+silently confined to the project directory and every read/write outside it prompted for
+approval. V1 (`OpenCodeRuntime.buildOpenCodePermissionRules`) had always sent an explicit
+`external_directory → allow`. The full-access branch now sends both rules again, in the same
+order (`*`, then `external_directory`).
+
+Tests: `Adapters/OpenCode2AdapterV2.test.ts` (`t3Rules` and the fork/session-get expectations),
+`OpenCode2OrchestratorV2.integration.test.ts` (`FULL_ACCESS`, `planRules`), and the recorded
+fixtures `testkit/fixtures/opencode2_fork` and `opencode2_switch`, which pin the outbound
+`session.update` rules.
+
 ## Non-product files in the delta
 
 - `README.md` — fork section.
@@ -358,6 +374,9 @@ cd apps/server && vp test run \
   src/cli/desktopLaunch.test.ts src/cli/app.test.ts \
   src/orchestration-v2/Adapters/CodexAdapterV2.test.ts \
   src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts \
+  src/orchestration-v2/Adapters/OpenCode2AdapterV2.test.ts \
+  src/orchestration-v2/OpenCode2OrchestratorV2.integration.test.ts \
+  src/orchestration-v2/testkit/OrchestratorReplayFixtures.integration.test.ts \
   src/orchestration-v2/ProviderSessionManager.test.ts src/mcp/McpHttpServer.test.ts
 cd packages/provider-core && vp test run src/server
 
