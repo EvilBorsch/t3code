@@ -1,278 +1,99 @@
-import type {
-  EnvironmentId,
-  SidebarProjectGroupingMode,
-  SidebarThreadSortOrder,
-} from "@t3tools/contracts";
-import type { MenuAction } from "@react-native-menu/menu";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
-import { useCallback, useMemo, useRef } from "react";
-import { Platform, Pressable, Text as RNText, TextInput, View } from "react-native";
+import { use, useCallback, useEffect, useRef } from "react";
+import { useNavigation, type ParamListBase } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { Platform } from "react-native";
 import type { SearchBarCommands } from "react-native-screens";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-import { ControlPillMenu } from "../../components/ControlPill";
-import { SymbolView } from "../../components/AppSymbol";
-import { T3Wordmark } from "../../components/T3Wordmark";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { createNativeMailSearchToolbarItem } from "../layout/native-mail-search-toolbar";
-import type { HomeProjectSortOrder } from "./homeThreadList";
-import {
-  buildHomeListFilterMenu,
-  type HomeListFilterMenuEnvironment,
-} from "./home-list-filter-menu";
-import {
-  hasCustomHomeListOptions,
-  PROJECT_GROUPING_OPTIONS,
-  PROJECT_SORT_OPTIONS,
-  THREAD_SORT_OPTIONS,
-} from "./home-list-options";
+import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
+import { buildHomeListFilterMenu } from "./home-list-filter-menu";
+import { createSidebarHeaderItems } from "../threads/sidebar-native-header-items";
+import type { HomeHeaderProps } from "./HomeHeader.types";
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
-export type HomeHeaderEnvironment = HomeListFilterMenuEnvironment;
+export type { HomeHeaderEnvironment } from "./HomeHeader.types";
 
-export function HomeHeader(props: {
-  readonly environments: ReadonlyArray<HomeHeaderEnvironment>;
-  readonly searchQuery: string;
-  readonly selectedEnvironmentId: EnvironmentId | null;
-  readonly projectSortOrder: HomeProjectSortOrder;
-  readonly threadSortOrder: SidebarThreadSortOrder;
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
-  readonly onSearchQueryChange: (query: string) => void;
-  readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
-  readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
-  readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
-  readonly onProjectGroupingModeChange: (mode: SidebarProjectGroupingMode) => void;
-  readonly onOpenSettings: () => void;
-  readonly onStartNewTask: () => void;
-}) {
-  if (Platform.OS === "android") {
-    return <AndroidHomeHeader {...props} />;
-  }
-
-  return <IosHomeHeader {...props} />;
-}
-
-type HomeHeaderProps = Parameters<typeof HomeHeader>[0];
-
-function checkedMenuState(checked: boolean) {
-  return checked ? ("on" as const) : undefined;
-}
-
-function AndroidHomeHeader(props: HomeHeaderProps) {
-  const insets = useSafeAreaInsets();
-  const iconColor = useThemeColor("--color-icon");
-  const mutedColor = useThemeColor("--color-foreground-muted");
-  const hasCustomListOptions = hasCustomHomeListOptions(props);
-  const menuActions = useMemo<MenuAction[]>(
-    () => [
-      {
-        id: "environment",
-        title: "Environment",
-        subactions: [
-          {
-            id: "environment:all",
-            title: "All environments",
-            state: checkedMenuState(props.selectedEnvironmentId === null),
-          },
-          ...props.environments.map((environment) => ({
-            id: `environment:${environment.environmentId}`,
-            title: environment.label,
-            state: checkedMenuState(props.selectedEnvironmentId === environment.environmentId),
-          })),
-        ],
-      },
-      {
-        id: "project-sort",
-        title: "Sort projects",
-        subactions: PROJECT_SORT_OPTIONS.map((option) => ({
-          id: `project-sort:${option.value}`,
-          title: option.label,
-          state: checkedMenuState(props.projectSortOrder === option.value),
-        })),
-      },
-      {
-        id: "thread-sort",
-        title: "Sort threads",
-        subactions: THREAD_SORT_OPTIONS.map((option) => ({
-          id: `thread-sort:${option.value}`,
-          title: option.label,
-          state: checkedMenuState(props.threadSortOrder === option.value),
-        })),
-      },
-      {
-        id: "project-grouping",
-        title: "Group projects",
-        subactions: PROJECT_GROUPING_OPTIONS.map((option) => ({
-          id: `project-grouping:${option.value}`,
-          title: option.label,
-          state: checkedMenuState(props.projectGroupingMode === option.value),
-        })),
-      },
-    ],
-    [
-      props.environments,
-      props.projectGroupingMode,
-      props.projectSortOrder,
-      props.selectedEnvironmentId,
-      props.threadSortOrder,
-    ],
-  );
-  const handleMenuAction = useCallback(
-    (event: { nativeEvent: { event: string } }) => {
-      const id = event.nativeEvent.event;
-      if (id === "environment:all") {
-        props.onEnvironmentChange(null);
-        return;
-      }
-
-      if (id.startsWith("environment:")) {
-        const environmentId = id.slice("environment:".length);
-        const environment = props.environments.find(
-          (candidate) => candidate.environmentId === environmentId,
-        );
-        if (environment) {
-          props.onEnvironmentChange(environment.environmentId);
-        }
-        return;
-      }
-
-      const projectSort = PROJECT_SORT_OPTIONS.find(
-        (option) => id === `project-sort:${option.value}`,
-      );
-      if (projectSort) {
-        props.onProjectSortOrderChange(projectSort.value);
-        return;
-      }
-
-      const threadSort = THREAD_SORT_OPTIONS.find((option) => id === `thread-sort:${option.value}`);
-      if (threadSort) {
-        props.onThreadSortOrderChange(threadSort.value);
-        return;
-      }
-
-      const grouping = PROJECT_GROUPING_OPTIONS.find(
-        (option) => id === `project-grouping:${option.value}`,
-      );
-      if (grouping) {
-        props.onProjectGroupingModeChange(grouping.value);
-      }
-    },
-    [props],
-  );
-
-  return (
-    <>
-      <NativeStackScreenOptions options={{ headerShown: false }} />
-      <View
-        className="border-b border-header-border bg-header px-4 pb-3"
-        style={{
-          paddingTop: Math.max(insets.top, 12),
-        }}
-      >
-        <View className="w-full max-w-[720px] self-center gap-3">
-          <View className="flex-row items-center gap-2.5">
-            <View className="flex-1 flex-row items-center gap-2">
-              {/* Mirrors the desktop SidebarBrand: T3 mark + muted "Code". */}
-              <T3Wordmark color={iconColor} height={15} />
-              <RNText className="-ml-0.5 text-[21px] font-t3-medium tracking-[-0.5px] text-foreground-muted">
-                Code
-              </RNText>
-              <View className="rounded-full bg-subtle px-2 py-0.75">
-                <RNText className="text-[11px] font-t3-bold tracking-[1.1px] text-foreground-muted uppercase">
-                  Alpha
-                </RNText>
-              </View>
-            </View>
-
-            <ControlPillMenu
-              actions={menuActions}
-              isAnchoredToRight
-              onPressAction={handleMenuAction}
-            >
-              <Pressable
-                accessibilityLabel="Filter and sort threads"
-                accessibilityRole="button"
-                className="size-11 items-center justify-center rounded-full bg-subtle"
-              >
-                <SymbolView
-                  name={
-                    hasCustomListOptions
-                      ? "line.3.horizontal.decrease.circle.fill"
-                      : "line.3.horizontal.decrease.circle"
-                  }
-                  size={16}
-                  tintColor={iconColor}
-                  type="monochrome"
-                />
-              </Pressable>
-            </ControlPillMenu>
-            {/* Built identically to the filter button so the two circles
-                match exactly (ControlPill sizes via Tailwind classes and
-                resolves to a different box). */}
-            <Pressable
-              accessibilityLabel="Open settings"
-              accessibilityRole="button"
-              onPress={props.onOpenSettings}
-              className="size-11 items-center justify-center rounded-full bg-subtle"
-            >
-              <SymbolView name="gearshape" size={18} tintColor={iconColor} type="monochrome" />
-            </Pressable>
-          </View>
-
-          <View className="min-h-12 flex-row items-center gap-2.5 rounded-2xl border border-input-border bg-input px-3.5">
-            <SymbolView name="magnifyingglass" size={17} tintColor={mutedColor} type="monochrome" />
-            <TextInput
-              accessibilityLabel="Search threads"
-              autoCapitalize="none"
-              onChangeText={props.onSearchQueryChange}
-              placeholder="Search threads"
-              placeholderTextColorClassName="accent-placeholder"
-              className="flex-1 py-2.5 text-base font-sans text-foreground"
-              value={props.searchQuery}
-            />
-            {props.searchQuery.length > 0 ? (
-              <Pressable
-                accessibilityLabel="Clear search"
-                hitSlop={10}
-                onPress={() => props.onSearchQueryChange("")}
-              >
-                <SymbolView
-                  name="xmark.circle.fill"
-                  size={17}
-                  tintColor={mutedColor}
-                  type="monochrome"
-                />
-              </Pressable>
-            ) : null}
-          </View>
-        </View>
-      </View>
-    </>
-  );
-}
-
-function IosHomeHeader(props: HomeHeaderProps) {
+export function HomeHeader(props: HomeHeaderProps) {
+  const navigation = useNavigation<NativeStackNavigationProp<ParamListBase>>();
+  const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
+  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
+  const primaryColumn = use(NativePrimaryColumnContext);
+  const sidebarHeader =
+    Platform.OS === "ios" &&
+    primaryColumn !== null &&
+    (Platform.isPad || !usesNativeMailSearchToolbar);
+  const showsCompactCompose = Platform.OS === "ios" && Platform.isPad && !layout.usesSplitView;
   const searchBarRef = useRef<SearchBarCommands>(null);
-  const iconColor = useThemeColor("--color-icon");
-  const hasCustomListOptions = hasCustomHomeListOptions(props);
+  const focusAfterReveal = useRef(false);
+  useEffect(
+    () =>
+      navigation.addListener("transitionEnd", (event) => {
+        if (focusAfterReveal.current && !event.data.closing) {
+          focusAfterReveal.current = false;
+          searchBarRef.current?.focus();
+        }
+      }),
+    [navigation],
+  );
+  const iconColor = useUniwindTheme()["--color-icon"];
+  // The list uses a fixed creation order and ignores sort/group options, so
+  // the filter menu only carries the filters and the "customized" icon state
+  // keys off those alone.
+  const hasCustomListOptions =
+    props.selectedEnvironmentId !== null || props.selectedProjectKey !== null;
   const focusSearch = useCallback(() => {
+    if (primaryColumn && !panes.primarySidebarVisible) {
+      focusAfterReveal.current = true;
+      togglePrimarySidebar();
+      return true;
+    }
     searchBarRef.current?.focus();
     return searchBarRef.current !== null;
-  }, []);
+  }, [primaryColumn, panes.primarySidebarVisible, togglePrimarySidebar]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
   const filterMenu = buildHomeListFilterMenu(props);
+
+  if (props.usesWorkspaceToolbar) {
+    return null;
+  }
 
   return (
     <>
       <NativeStackScreenOptions
+        optionsVersion={[filterMenu.items, showsCompactCompose]}
         options={{
           // Static header config (glass, title, fonts) lives in Stack.tsx
           // (GLASS_HEADER_OPTIONS). Only dynamic values are set here.
           headerTintColor: iconColor,
-          unstable_headerRightItems:
-            Platform.OS === "ios"
-              ? () => [
+          unstable_headerRightItems: () =>
+            sidebarHeader
+              ? [
+                  ...createSidebarHeaderItems({
+                    filterIcon: hasCustomListOptions
+                      ? "line.3.horizontal.decrease.circle.fill"
+                      : "line.3.horizontal.decrease.circle",
+                    filterMenu,
+                    onOpenSettings: props.onOpenSettings,
+                  }),
+                  ...(showsCompactCompose
+                    ? [
+                        withNativeGlassHeaderItem({
+                          accessibilityLabel: "New task",
+                          axisBehavior: "horizontalOnly",
+                          icon: { name: "square.and.pencil", type: "sfSymbol" } as const,
+                          identifier: "home-new-task",
+                          label: "",
+                          onPress: props.onStartNewTask,
+                          type: "button",
+                        }),
+                      ]
+                    : []),
+                ]
+              : [
                   withNativeGlassHeaderItem({
                     accessibilityLabel: "Open settings",
                     icon: { name: "ellipsis", type: "sfSymbol" } as const,
@@ -281,59 +102,72 @@ function IosHomeHeader(props: HomeHeaderProps) {
                     onPress: props.onOpenSettings,
                     type: "button",
                   }),
-                ]
-              : undefined,
-          unstable_headerToolbarItems:
-            Platform.OS === "ios"
-              ? () => [
-                  createNativeMailSearchToolbarItem({
-                    composeButtonId: "home-new-task",
-                    composeSystemImageName: "square.and.pencil",
-                    filterMenu,
-                    filterButtonId: "home-filter",
-                    filterSystemImageName: hasCustomListOptions
-                      ? "line.3.horizontal.decrease.circle.fill"
-                      : "line.3.horizontal.decrease",
-                    onComposePress: props.onStartNewTask,
-                    onSearchTextChange: props.onSearchQueryChange,
-                    placeholder: "Search",
-                    searchTextChangeId: "home-search-text",
-                  }),
-                ]
-              : undefined,
-          headerSearchBarOptions:
-            Platform.OS === "ios"
-              ? undefined
-              : {
+                ],
+          // The keys below are set per-branch (not `undefined`) so a later
+          // reapply cannot clobber options owned by NativeHeaderToolbar.
+          ...(sidebarHeader
+            ? {
+                headerSearchBarOptions: {
                   ref: searchBarRef,
-                  allowToolbarIntegration: true,
+                  autoCapitalize: "none" as const,
                   hideNavigationBar: false,
+                  hideWhenScrolling: false,
+                  obscureBackground: false,
+                  placement: "stacked" as const,
+                  allowToolbarIntegration: false,
                   placeholder: "Search",
-                  onCancelButtonPress: () => {
-                    props.onSearchQueryChange("");
-                  },
-                  onChangeText: (event) => {
-                    props.onSearchQueryChange(event.nativeEvent.text);
-                  },
+                  onCancelButtonPress: () => props.onSearchQueryChange(""),
+                  onChangeText: (event) => props.onSearchQueryChange(event.nativeEvent.text),
                 },
+                unstable_headerToolbarItems: () => [],
+              }
+            : usesNativeMailSearchToolbar
+              ? {
+                  headerSearchBarOptions: {
+                    ref: searchBarRef,
+                    autoCapitalize: "none" as const,
+                    onCancelButtonPress: () => props.onSearchQueryChange(""),
+                  },
+                  unstable_headerToolbarItems: () => [
+                    createNativeMailSearchToolbarItem({
+                      composeButtonId: "home-new-task",
+                      composeSystemImageName: "square.and.pencil",
+                      filterMenu,
+                      filterButtonId: "home-filter",
+                      filterSystemImageName: hasCustomListOptions
+                        ? "line.3.horizontal.decrease.circle.fill"
+                        : "line.3.horizontal.decrease",
+                      onComposePress: props.onStartNewTask,
+                      onSearchTextChange: props.onSearchQueryChange,
+                      placeholder: "Search",
+                      searchTextChangeId: "home-search-text",
+                      showsSearchDismissButton: true,
+                    }),
+                  ],
+                }
+              : {
+                  // Pre-Liquid-Glass iOS: standard pull-down search in the nav
+                  // bar; create + sort live in the plain bottom toolbar below.
+                  headerSearchBarOptions: {
+                    ref: searchBarRef,
+                    autoCapitalize: "none" as const,
+                    hideNavigationBar: false,
+                    placeholder: "Search",
+                    onCancelButtonPress: () => {
+                      props.onSearchQueryChange("");
+                    },
+                    onChangeText: (event) => {
+                      props.onSearchQueryChange(event.nativeEvent.text);
+                    },
+                  },
+                }),
         }}
       />
 
-      {Platform.OS === "ios" ? null : (
-        <NativeHeaderToolbar placement="right">
-          <NativeHeaderToolbar.Button
-            accessibilityLabel="Open settings"
-            icon="gearshape"
-            onPress={props.onOpenSettings}
-            separateBackground
-          />
-        </NativeHeaderToolbar>
-      )}
-
-      {Platform.OS === "ios" ? null : (
+      {sidebarHeader || usesNativeMailSearchToolbar ? null : (
         <NativeHeaderToolbar placement="bottom">
           <NativeHeaderToolbar.Menu
-            accessibilityLabel="Filter and sort threads"
+            accessibilityLabel="Filter threads"
             icon={
               hasCustomListOptions
                 ? "line.3.horizontal.decrease.circle.fill"
@@ -342,10 +176,6 @@ function IosHomeHeader(props: HomeHeaderProps) {
             title="Thread list options"
             separateBackground
           >
-            <NativeHeaderToolbar.MenuAction onPress={props.onOpenSettings}>
-              <NativeHeaderToolbar.Label>Settings</NativeHeaderToolbar.Label>
-            </NativeHeaderToolbar.MenuAction>
-
             <NativeHeaderToolbar.Menu title="Environment">
               <NativeHeaderToolbar.Label>Environment</NativeHeaderToolbar.Label>
               <NativeHeaderToolbar.MenuAction
@@ -366,49 +196,29 @@ function IosHomeHeader(props: HomeHeaderProps) {
               ))}
             </NativeHeaderToolbar.Menu>
 
-            <NativeHeaderToolbar.Menu title="Sort projects">
-              <NativeHeaderToolbar.Label>Sort projects</NativeHeaderToolbar.Label>
-              {PROJECT_SORT_OPTIONS.map((option) => (
+            {props.projects.length > 0 ? (
+              <NativeHeaderToolbar.Menu title="Project">
+                <NativeHeaderToolbar.Label>Project</NativeHeaderToolbar.Label>
                 <NativeHeaderToolbar.MenuAction
-                  key={option.value}
-                  isOn={props.projectSortOrder === option.value}
-                  onPress={() => props.onProjectSortOrderChange(option.value)}
+                  isOn={props.selectedProjectKey === null}
+                  onPress={() => props.onProjectChange(null)}
+                  subtitle="Show threads from every project"
                 >
-                  <NativeHeaderToolbar.Label>{option.label}</NativeHeaderToolbar.Label>
+                  <NativeHeaderToolbar.Label>All projects</NativeHeaderToolbar.Label>
                 </NativeHeaderToolbar.MenuAction>
-              ))}
-            </NativeHeaderToolbar.Menu>
-
-            <NativeHeaderToolbar.Menu title="Sort threads">
-              <NativeHeaderToolbar.Label>Sort threads</NativeHeaderToolbar.Label>
-              {THREAD_SORT_OPTIONS.map((option) => (
-                <NativeHeaderToolbar.MenuAction
-                  key={option.value}
-                  isOn={props.threadSortOrder === option.value}
-                  onPress={() => props.onThreadSortOrderChange(option.value)}
-                >
-                  <NativeHeaderToolbar.Label>{option.label}</NativeHeaderToolbar.Label>
-                </NativeHeaderToolbar.MenuAction>
-              ))}
-            </NativeHeaderToolbar.Menu>
-
-            <NativeHeaderToolbar.Menu title="Group projects">
-              <NativeHeaderToolbar.Label>Group projects</NativeHeaderToolbar.Label>
-              {PROJECT_GROUPING_OPTIONS.map((option) => (
-                <NativeHeaderToolbar.MenuAction
-                  key={option.value}
-                  isOn={props.projectGroupingMode === option.value}
-                  onPress={() => props.onProjectGroupingModeChange(option.value)}
-                  subtitle={option.subtitle}
-                >
-                  <NativeHeaderToolbar.Label>{option.label}</NativeHeaderToolbar.Label>
-                </NativeHeaderToolbar.MenuAction>
-              ))}
-            </NativeHeaderToolbar.Menu>
+                {props.projects.map((project) => (
+                  <NativeHeaderToolbar.MenuAction
+                    key={project.key}
+                    isOn={props.selectedProjectKey === project.key}
+                    onPress={() => props.onProjectChange(project.key)}
+                  >
+                    <NativeHeaderToolbar.Label>{project.label}</NativeHeaderToolbar.Label>
+                  </NativeHeaderToolbar.MenuAction>
+                ))}
+              </NativeHeaderToolbar.Menu>
+            ) : null}
           </NativeHeaderToolbar.Menu>
-          <NativeHeaderToolbar.Spacer width={8} sharesBackground={false} />
-          <NativeHeaderToolbar.SearchBarSlot />
-          <NativeHeaderToolbar.Spacer width={8} sharesBackground={false} />
+          <NativeHeaderToolbar.Spacer flexible />
           <NativeHeaderToolbar.Button
             accessibilityLabel="New task"
             icon="square.and.pencil"

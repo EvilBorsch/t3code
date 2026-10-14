@@ -19,7 +19,10 @@ export interface BrowserViewportLayout {
   readonly fillsPanel: boolean;
 }
 
-export const BROWSER_DEVICE_TOOLBAR_HEIGHT = 32;
+// Room for a compact size input (30px with its border) plus its 3px focus ring
+// on both sides, inside the toolbar's 1px bottom border. The bar scrolls
+// horizontally, which also clips anything that overflows vertically.
+export const BROWSER_DEVICE_TOOLBAR_HEIGHT = 38;
 export const BROWSER_VIEWPORT_RESIZE_RAIL_SIZE = 10;
 
 export type BrowserViewportResizeDirection =
@@ -39,6 +42,33 @@ export const browserViewportSettingKey = (setting: PreviewViewportSetting): stri
 
 const normalizeZoomFactor = (zoomFactor: number): number =>
   Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+
+export function resolveFittedBrowserViewport(
+  setting: PreviewViewportSetting,
+  sourceContent: {
+    readonly width: number;
+    readonly height: number;
+    readonly scale: number;
+  } | null,
+  zoomFactor = 1,
+): Exclude<PreviewViewportSetting, { readonly _tag: "fill" }> {
+  if (setting._tag !== "fill") return setting;
+  const normalizedZoomFactor = normalizeZoomFactor(zoomFactor);
+  if (sourceContent) {
+    return {
+      _tag: "freeform",
+      width: Math.max(
+        1,
+        Math.round(sourceContent.width / sourceContent.scale / normalizedZoomFactor),
+      ),
+      height: Math.max(
+        1,
+        Math.round(sourceContent.height / sourceContent.scale / normalizedZoomFactor),
+      ),
+    };
+  }
+  return { _tag: "freeform", width: 1280, height: 800 };
+}
 
 export function resolveBrowserDeviceViewportArea(container: {
   readonly width: number;
