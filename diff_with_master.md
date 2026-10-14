@@ -283,13 +283,16 @@ upstream's.
 all-off), `McpHttpServer.test.ts` (filtered list, refused call, coverage), adapter tests for each
 provider (prompt per tool set), `ContextHandoffBudget.test.ts`, provider-core instruction tests.
 
-## 16. Compact-before-send chip starts as Full
+## 16. Claude prompt cache TTL survives 5-minute tail writes
 
-Upstream (#16631, #17127) shows a **Compact** chip next to send when a large Claude thread's prompt
-cache has expired, and turns it on by default: Enter queues the message behind a `/compact` run.
-The fork starts the chip as **Full** — Enter just sends — and a click opts the next send into
-compaction (`ChatView.tsx`: `compactThreadKeys` holds the opted-in threads; a started turn clears
-it). `docs/user/providers-claude.md` describes the fork behavior.
+Upstream's Compact chip (#16631, #17127, #17945) appears when a large Claude thread's prompt cache
+looks expired, using the TTL of the latest response's cache write. Claude Code writes the
+conversation prefix with 1h entries but sometimes only a short tail with 5m, so a turn ending on such
+a write reported 5 minutes and the chip appeared after 5 minutes idle while the prefix stayed cached.
+`ClaudeAdapterV2.ts` remembers per native thread that a 1h write happened (until the next
+`compact_boundary`) and keeps reporting 1h; sessions that only write 5m (API key, Bedrock, Vertex)
+keep 5 minutes. The memory is not persisted across server restarts. Tests in
+`ClaudeAdapterV2.test.ts` ("prompt cache TTL" scenarios).
 
 ## Non-product files in the delta
 

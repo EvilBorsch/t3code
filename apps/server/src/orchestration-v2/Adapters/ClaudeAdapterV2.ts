@@ -177,15 +177,21 @@ interface ClaudeCacheCreation {
   readonly ephemeral_5m_input_tokens: number;
 }
 
+const CLAUDE_ONE_HOUR_PROMPT_CACHE_TTL_MS = 60 * 60_000;
+
 // Claude Code writes 1h cache entries on a subscription within its limits and
 // 5m entries otherwise (API key, Bedrock, Vertex, extra usage). A response
 // that wrote nothing leaves the TTL unknown.
+// Ответ может дописать 5m-хвост к префиксу, записанному ранее с 1h; каждое
+// чтение продлевает этот префикс, поэтому TTL остаётся часовым.
 function claudePromptCacheTtlMs(
   cacheCreation: ClaudeCacheCreation | null | undefined,
+  oneHourCacheWrittenEarlier: boolean,
 ): number | undefined {
-  if (!cacheCreation) return undefined;
-  if (cacheCreation.ephemeral_1h_input_tokens > 0) return 60 * 60_000;
-  if (cacheCreation.ephemeral_5m_input_tokens > 0) return 5 * 60_000;
+  if (oneHourCacheWrittenEarlier || (cacheCreation?.ephemeral_1h_input_tokens ?? 0) > 0) {
+    return CLAUDE_ONE_HOUR_PROMPT_CACHE_TTL_MS;
+  }
+  if ((cacheCreation?.ephemeral_5m_input_tokens ?? 0) > 0) return 5 * 60_000;
   return undefined;
 }
 
@@ -199,13 +205,14 @@ export function claudeProviderTurnTokenUsage(
   },
   modelSelection: ModelSelection,
   updatedAt: string,
+  oneHourCacheWrittenEarlier: boolean,
 ) {
   const inputTokens =
     usage.input_tokens +
     (usage.cache_creation_input_tokens ?? 0) +
     (usage.cache_read_input_tokens ?? 0);
   const outputTokens = usage.output_tokens;
-  const promptCacheTtlMs = claudePromptCacheTtlMs(usage.cache_creation);
+  const promptCacheTtlMs = claudePromptCacheTtlMs(usage.cache_creation, oneHourCacheWrittenEarlier);
   return {
     usedTokens: inputTokens + outputTokens,
     maxTokens: claudeContextWindow(modelSelection),
@@ -3465,6 +3472,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const goalsByNativeThread = new Map<string, OrchestrationV2ProviderGoal | null>();
         // Turns whose model output met an active goal's Stop hook check at its end.
         const goalCheckedTurns = new Set<string>();
+        // Нативные сессии, записавшие 1h-кэш с последней компактизации.
+        const oneHourPromptCacheNativeThreads = new Set<string>();
         // Subagent registry that survives turn settle: a background subagent
         // (Agent with run_in_background) can complete after the root turn
         // ended, and its task_notification must both count as wake evidence
@@ -6878,6 +6887,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (message.type === "system" && message.subtype === "compact_boundary") {
+            oneHourPromptCacheNativeThreads.delete(context.nativeThreadId);
             const now = yield* DateTime.now;
             const nativeItemId = message.uuid;
             const postTokens = message.compact_metadata.post_tokens;
@@ -7037,6 +7047,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message.message.usage !== undefined &&
               message.message.model !== "<synthetic>"
             ) {
+              const tokenUsage = claudeProviderTurnTokenUsage(
+                message.message.usage,
+                context.input.modelSelection,
+                DateTime.formatIso(now),
+                oneHourPromptCacheNativeThreads.has(context.nativeThreadId),
+              );
+              if (tokenUsage.promptCacheTtlMs === CLAUDE_ONE_HOUR_PROMPT_CACHE_TTL_MS) {
+                oneHourPromptCacheNativeThreads.add(context.nativeThreadId);
+              }
               yield* emitProviderEvent({
                 type: "provider_turn.updated",
                 driver: CLAUDE_PROVIDER,
@@ -7055,11 +7074,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   status: "running",
                   startedAt: context.startedAt,
                   completedAt: null,
-                  tokenUsage: claudeProviderTurnTokenUsage(
-                    message.message.usage,
-                    context.input.modelSelection,
-                    DateTime.formatIso(now),
-                  ),
+                  tokenUsage,
                 },
               });
             }

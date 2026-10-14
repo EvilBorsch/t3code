@@ -1007,6 +1007,7 @@ describe("ClaudeAdapterV2 context usage", () => {
       },
       CLAUDE_TEST_MODEL_SELECTION,
       "2026-08-29T00:00:00.000Z",
+      false,
     );
 
     assert.deepEqual(usage, {
@@ -1020,28 +1021,40 @@ describe("ClaudeAdapterV2 context usage", () => {
     });
   });
 
-  it("reports the prompt cache TTL the response wrote", () => {
-    const ttlFor = (cache_creation: {
-      ephemeral_1h_input_tokens: number;
-      ephemeral_5m_input_tokens: number;
-    }) =>
+  it("reports the prompt cache TTL the conversation's cache lives for", () => {
+    const ttlFor = (
+      cache_creation: {
+        ephemeral_1h_input_tokens: number;
+        ephemeral_5m_input_tokens: number;
+      },
+      oneHourCacheWrittenEarlier: boolean,
+    ) =>
       ClaudeAdapterV2.claudeProviderTurnTokenUsage(
         { input_tokens: 1, output_tokens: 1, cache_creation },
         CLAUDE_TEST_MODEL_SELECTION,
         "2026-08-29T00:00:00.000Z",
+        oneHourCacheWrittenEarlier,
       ).promptCacheTtlMs;
 
     assert.strictEqual(
-      ttlFor({ ephemeral_1h_input_tokens: 2_000, ephemeral_5m_input_tokens: 300 }),
+      ttlFor({ ephemeral_1h_input_tokens: 2_000, ephemeral_5m_input_tokens: 300 }, false),
       60 * 60_000,
     );
     assert.strictEqual(
-      ttlFor({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 300 }),
+      ttlFor({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 300 }, false),
       5 * 60_000,
     );
     assert.strictEqual(
-      ttlFor({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 }),
+      ttlFor({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 300 }, true),
+      60 * 60_000,
+    );
+    assert.strictEqual(
+      ttlFor({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 }, false),
       undefined,
+    );
+    assert.strictEqual(
+      ttlFor({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 }, true),
+      60 * 60_000,
     );
   });
 });
@@ -2341,6 +2354,44 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       uuid: input.uuid,
       session_id: WAKE_NATIVE_SESSION,
     });
+  // Ответ, который дочитал закэшированный префикс и дописал в кэш хвост с заданным TTL.
+  const makeAssistantCacheWriteFrame = (input: {
+    readonly uuid: string;
+    readonly ephemeral1hInputTokens: number;
+    readonly ephemeral5mInputTokens: number;
+  }) =>
+    claudeSdkFrame({
+      type: "assistant",
+      message: {
+        model: "claude-sonnet-4-6",
+        id: `msg_${input.uuid}`,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "Working." }],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_creation_input_tokens: input.ephemeral1hInputTokens + input.ephemeral5mInputTokens,
+          cache_read_input_tokens: 179_148,
+          cache_creation: {
+            ephemeral_1h_input_tokens: input.ephemeral1hInputTokens,
+            ephemeral_5m_input_tokens: input.ephemeral5mInputTokens,
+          },
+        },
+      },
+      parent_tool_use_id: null,
+      uuid: input.uuid,
+      session_id: WAKE_NATIVE_SESSION,
+    });
+  const reportedPromptCacheTtls = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+    events.flatMap((event) =>
+      event.type === "provider_turn.updated" &&
+      event.providerTurn.tokenUsage?.promptCacheTtlMs !== undefined
+        ? [event.providerTurn.tokenUsage.promptCacheTtlMs]
+        : [],
+    );
   const makeResultFrame = (input: {
     readonly uuid: string;
     readonly result: string;
@@ -3744,6 +3795,182 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             cacheCreationTokens: 0,
           });
         }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        ),
+      ),
+  );
+
+  it.effect(
+    "keeps the one-hour prompt cache TTL when a response writes only a five-minute tail",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-cache-ttl-1"),
+            text: "Inspect the repo.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantCacheWriteFrame({
+            uuid: "00000000-0000-4000-8000-000000000c01",
+            ephemeral1hInputTokens: 24_000,
+            ephemeral5mInputTokens: 0,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantCacheWriteFrame({
+            uuid: "00000000-0000-4000-8000-000000000c02",
+            ephemeral1hInputTokens: 0,
+            ephemeral5mInputTokens: 716,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000c03", result: "Inspected." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-cache-ttl-2"),
+            providerTurnOrdinal: 2,
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantCacheWriteFrame({
+            uuid: "00000000-0000-4000-8000-000000000c04",
+            ephemeral1hInputTokens: 0,
+            ephemeral5mInputTokens: 512,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000c05", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+
+        assert.deepEqual(reportedPromptCacheTtls(harness.events), [
+          60 * 60_000,
+          60 * 60_000,
+          60 * 60_000,
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        ),
+      ),
+  );
+
+  it.effect("forgets the one-hour prompt cache TTL after compaction replaces the prefix", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-cache-ttl-compact"),
+          text: "Keep going.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeAssistantCacheWriteFrame({
+          uuid: "00000000-0000-4000-8000-000000000c11",
+          ephemeral1hInputTokens: 24_000,
+          ephemeral5mInputTokens: 0,
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "auto", pre_tokens: 180_000, post_tokens: 20_000 },
+          uuid: "00000000-0000-4000-8000-000000000c12",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeAssistantCacheWriteFrame({
+          uuid: "00000000-0000-4000-8000-000000000c13",
+          ephemeral1hInputTokens: 0,
+          ephemeral5mInputTokens: 20_000,
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000c14", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+
+      assert.deepEqual(reportedPromptCacheTtls(harness.events), [60 * 60_000, 5 * 60_000]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
+  it.effect(
+    "reports the five-minute prompt cache TTL for a session that never wrote one hour",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-cache-ttl-api-key"),
+            text: "Inspect the repo.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantCacheWriteFrame({
+            uuid: "00000000-0000-4000-8000-000000000c21",
+            ephemeral1hInputTokens: 0,
+            ephemeral5mInputTokens: 24_000,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantCacheWriteFrame({
+            uuid: "00000000-0000-4000-8000-000000000c22",
+            ephemeral1hInputTokens: 0,
+            ephemeral5mInputTokens: 716,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000c23", result: "Inspected." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+
+        assert.deepEqual(reportedPromptCacheTtls(harness.events), [5 * 60_000, 5 * 60_000]);
       }).pipe(
         Effect.scoped,
         Effect.provide(
