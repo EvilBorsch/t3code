@@ -7786,18 +7786,17 @@ export default function ChatView(props: ChatViewProps) {
     })
       ? activeContextWindow.usedTokens
       : null;
-  // Threads whose Compact chip is turned off. A send that starts its turn
-  // clears its thread's entry; a failed send keeps it for the retry.
-  const [fullHistoryThreadKeys, setFullHistoryThreadKeys] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  const keepFullHistory = fullHistoryThreadKeys.has(routeThreadKey);
+  // Форк: чип Compact по умолчанию выключен, Enter просто отправляет сообщение.
+  // Здесь треды, где чип включили кликом; отправка, начавшая ход, снимает
+  // отметку, а неудачная оставляет её для повтора.
+  const [compactThreadKeys, setCompactThreadKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const keepFullHistory = !compactThreadKeys.has(routeThreadKey);
   const setKeepFullHistory = useCallback((threadKey: string, keep: boolean) => {
-    setFullHistoryThreadKeys((current) => {
-      if (current.has(threadKey) === keep) return current;
+    setCompactThreadKeys((current) => {
+      if (current.has(threadKey) !== keep) return current;
       const next = new Set(current);
-      if (keep) next.add(threadKey);
-      else next.delete(threadKey);
+      if (keep) next.delete(threadKey);
+      else next.add(threadKey);
       return next;
     });
   }, []);
@@ -10082,7 +10081,7 @@ export default function ChatView(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
-        setKeepFullHistory(routeThreadKey, false);
+        setKeepFullHistory(routeThreadKey, true);
         // The turn is under way and will spend quota, so that thread's limits
         // snapshot is stale. Uploads may have outlasted a navigation, so only
         // the sending thread's panel clears.

@@ -181,6 +181,11 @@ now sets too; upstream's motion clones drop it, so a row animating out is never 
 legacy sidebar also keeps the open thread visible as the only row of a collapsed project, and
 beyond the preview count of an expanded one. Test: `Sidebar.reveal.test.tsx`.
 
+Orchestration V2 models subagents as real child threads (`lineage.relationshipToParent ===
+"subagent"`). Upstream's new sidebar hides them with `filterSidebarV2VisibleThreads`, but its
+legacy sidebar still listed them as ordinary rows. `LegacySidebar.tsx` now uses the same filter for
+project rows, project sorting and jump-key order; subagents stay in the parent's timeline.
+
 ## 9. Composer OS file drop → path mentions
 
 `chat/composerFileDrop.ts` (+ test) — `planComposerFileDrop`: in a **local** environment
@@ -277,6 +282,14 @@ upstream's.
 **Tests.** `ProviderSessionManager.test.ts` (capability sets per settings, overrides, rotation,
 all-off), `McpHttpServer.test.ts` (filtered list, refused call, coverage), adapter tests for each
 provider (prompt per tool set), `ContextHandoffBudget.test.ts`, provider-core instruction tests.
+
+## 16. Compact-before-send chip starts as Full
+
+Upstream (#16631, #17127) shows a **Compact** chip next to send when a large Claude thread's prompt
+cache has expired, and turns it on by default: Enter queues the message behind a `/compact` run.
+The fork starts the chip as **Full** — Enter just sends — and a click opts the next send into
+compaction (`ChatView.tsx`: `compactThreadKeys` holds the opted-in threads; a started turn clears
+it). `docs/user/providers-claude.md` describes the fork behavior.
 
 ## Non-product files in the delta
 

@@ -196,6 +196,7 @@ import {
   resolveThreadRowClassName,
   resolveThreadLastVisitedAt,
   resolveThreadStatusPill,
+  filterSidebarV2VisibleThreads,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
@@ -1359,7 +1360,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
     };
     const visibleProjectThreads = sortThreads(
-      projectThreads.filter((thread) => thread.archivedAt === null),
+      filterSidebarV2VisibleThreads(projectThreads, null),
       threadSortOrder,
     );
     const projectStatus = resolveProjectStatusIndicator(
@@ -3497,8 +3498,9 @@ export default function LegacySidebar() {
     animatedThreadListsRef.current.add(node);
   }, []);
 
+  // Треды сабагентов (v2 lineage) живут в таймлайне родителя, как и в новом сайдбаре.
   const visibleThreads = useMemo(
-    () => sidebarThreads.filter((thread) => thread.archivedAt === null),
+    () => filterSidebarV2VisibleThreads(sidebarThreads, null),
     [sidebarThreads],
   );
   const sortedProjects = useMemo(() => {
@@ -3537,9 +3539,7 @@ export default function LegacySidebar() {
     () =>
       sortedProjects.flatMap((project) => {
         const projectThreads = sortThreads(
-          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-            (thread) => thread.archivedAt === null,
-          ),
+          filterSidebarV2VisibleThreads(threadsByProjectKey.get(project.projectKey) ?? [], null),
           sidebarThreadSortOrder,
         );
         const projectExpanded = resolveProjectExpanded(
