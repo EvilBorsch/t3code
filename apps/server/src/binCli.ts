@@ -1,0 +1,124 @@
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import { Argument, Command } from "effect/cli";
+import * as CliError from "effect/cli/CliError";
+
+import * as NetService from "@t3tools/shared/Net";
+import packageJson from "../package.json" with { type: "json" };
+import { acpMcpBridgeCommand, acpMcpCallCommand } from "./cli/acpMcpBridge.ts";
+import { authCommand } from "./cli/auth.ts";
+import { appCommand } from "./cli/app.ts";
+import { browserCommand } from "./cli/browser.ts";
+import { connectCommand } from "./cli/connect.ts";
+import { pairCommand } from "./cli/pair.ts";
+import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
+import { type CliServerFlags, sharedServerCommandFlags } from "./cli/config.ts";
+import { findInstalledDesktopApp } from "./cli/desktopLaunch.ts";
+import { openCommand, openDesktopWorkspace } from "./cli/open.ts";
+import { projectCommand } from "./cli/project.ts";
+import { runDefaultServerCommand, serveCommand, startCommand } from "./cli/server.ts";
+import { updateCommand } from "./cli/update.ts";
+import { uninstallCommand } from "./cli/uninstall.ts";
+import { serviceLauncherCommand } from "./cli/serviceLauncher.ts";
+import { claudeHistoryCommand } from "./cli/claudeHistory.ts";
+import { sshHelperCommand } from "./cli/sshHelper.ts";
+import { serviceCommand } from "./cli/service.ts";
+import { servicePreflightCommand } from "./cli/servicePreflight.ts";
+import { themeCommand } from "./cli/theme.ts";
+import { traceCommand } from "./cli/trace.ts";
+import { triageCommand } from "./cli/triage.ts";
+
+const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
+
+const connectPublicConfigMissingMessage =
+  "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
+
+class ConnectPublicConfigMissingError extends CliError.UserError {
+  override get message() {
+    return connectPublicConfigMissingMessage;
+  }
+}
+
+const connectUnavailableCommand = Command.make("connect", {
+  command: Argument.String("command").pipe(Argument.variadic),
+}).pipe(
+  Command.withDescription("T3 Connect is unavailable in builds without public configuration."),
+  Command.unlisted,
+  Command.withHandler(() =>
+    Effect.fail(
+      new CliError.ShowHelp({
+        commandPath: ["t3", "connect"],
+        errors: [new ConnectPublicConfigMissingError({ cause: connectPublicConfigMissingMessage })],
+      }),
+    ),
+  ),
+);
+
+/**
+ * `t3 <path>` opens the workspace in the installed desktop app. Bare `t3` and any
+ * server flag keep it a server launch: dev runners start the server bare and
+ * configure it through env.
+ */
+const runRootCommand = (flags: CliServerFlags) =>
+  Effect.gen(function* () {
+    const { cwd, ...serverFlags } = flags;
+    if (
+      Option.isSome(cwd) &&
+      !Object.values<Option.Option<unknown>>(serverFlags).some(Option.isSome) &&
+      Option.isSome(yield* findInstalledDesktopApp)
+    ) {
+      return yield* openDesktopWorkspace(cwd.value);
+    }
+    return yield* runDefaultServerCommand(flags);
+  });
+
+export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
+  Command.make("t3", { ...sharedServerCommandFlags }).pipe(
+    Command.withDescription(
+      "Run the T3 Code server, or open `t3 <path>` in the installed desktop app.",
+    ),
+    Command.withHandler(runRootCommand),
+    Command.withSubcommands([
+      Command.make("help").pipe(
+        Command.withDescription("Show command help."),
+        Command.withHandler(() =>
+          Effect.fail(new CliError.ShowHelp({ commandPath: ["t3"], errors: [] })),
+        ),
+      ),
+      acpMcpBridgeCommand,
+      acpMcpCallCommand,
+      openCommand,
+      startCommand,
+      serveCommand,
+      appCommand,
+      pairCommand,
+      authCommand,
+      browserCommand,
+      projectCommand,
+      serviceCommand,
+      updateCommand,
+      uninstallCommand,
+      serviceLauncherCommand,
+      claudeHistoryCommand,
+      sshHelperCommand,
+
+      servicePreflightCommand,
+      themeCommand,
+      traceCommand,
+      triageCommand,
+      cloudEnabled ? connectCommand : connectUnavailableCommand,
+    ]),
+  );
+
+export const cli = makeCli();
+
+export function runCli() {
+  Command.run(cli, { version: packageJson.version }).pipe(
+    Effect.scoped,
+    Effect.provide(layerCliRuntime),
+    NodeRuntime.runMain,
+  );
+}
