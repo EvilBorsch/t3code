@@ -7765,10 +7765,10 @@ export default function ChatView(props: ChatViewProps) {
           ? "Compaction is unavailable for this provider"
           : "Compacting is unavailable right now"
     : null;
-  // Tokens a stale Claude session would re-read on its next turn. While set,
-  // the composer shows a Compact chip and Enter compacts first; turning the
-  // chip off sends the next message with full history. Held queues and
-  // multi-model sends never compact first, so the offer hides for them.
+  // Форк: столько токенов устаревшая сессия Claude перечитает на следующем ходе.
+  // Пока значение есть, композер показывает чип Compact; Enter отправляет с полной
+  // историей, сжимает только клик по чипу. Удержанная очередь и отправка в несколько
+  // моделей никогда не сжимают, поэтому для них чип скрыт.
   const resumeCompactionTokens =
     activeContextWindow &&
     !resumeCompactionPermanentlyDismissed &&
@@ -7786,25 +7786,6 @@ export default function ChatView(props: ChatViewProps) {
     })
       ? activeContextWindow.usedTokens
       : null;
-  // Threads whose Compact chip is turned off. A send that starts its turn
-  // clears its thread's entry; a failed send keeps it for the retry.
-  const [fullHistoryThreadKeys, setFullHistoryThreadKeys] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  const keepFullHistory = fullHistoryThreadKeys.has(routeThreadKey);
-  const setKeepFullHistory = useCallback((threadKey: string, keep: boolean) => {
-    setFullHistoryThreadKeys((current) => {
-      if (current.has(threadKey) === keep) return current;
-      const next = new Set(current);
-      if (keep) next.add(threadKey);
-      else next.delete(threadKey);
-      return next;
-    });
-  }, []);
-  const toggleKeepFullHistory = useCallback(
-    () => setKeepFullHistory(routeThreadKey, !keepFullHistory),
-    [keepFullHistory, routeThreadKey, setKeepFullHistory],
-  );
   const handleRestoreThreadBranch = useCallback(() => {
     if (!canWriteSourceControl) return;
     if (gitStatusQuery.data?.hasWorkingTreeChanges) {
@@ -8813,12 +8794,16 @@ export default function ChatView(props: ChatViewProps) {
     e?: { preventDefault: () => void },
     dispatchMode: ComposerDispatchMode = "auto",
     submissionIntent: ComposerSubmissionIntent = "foreground",
-    directAnnotation?: {
-      annotation: PreviewAnnotationPayload;
-      image: ComposerImageAttachment | null;
+    options?: {
+      compactFirst?: boolean;
+      directAnnotation?: {
+        annotation: PreviewAnnotationPayload;
+        image: ComposerImageAttachment | null;
+      };
     },
   ) => {
     e?.preventDefault();
+    const directAnnotation = options?.directAnnotation;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -9354,13 +9339,10 @@ export default function ChatView(props: ChatViewProps) {
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
-    // A stale Claude session compacts before this message so the turn does not re-read the
-    // old history. The message queues behind the /compact run, since steering into it is
-    // rejected.
+    // Клик по чипу Compact сжимает устаревшую сессию Claude перед сообщением, чтобы ход не
+    // перечитывал старую историю. Сообщение встаёт в очередь за /compact: steer в него отклоняется.
     const compactBeforeSend =
-      resumeCompactionTokens !== null &&
-      !keepFullHistory &&
-      messageTextForSend.toLowerCase() !== "/compact";
+      options?.compactFirst === true && messageTextForSend.toLowerCase() !== "/compact";
     const turnDispatchMode = compactBeforeSend || sendQueuesBehindSetup ? "queue" : dispatchMode;
     const shouldQueueBehindActiveRun =
       compactBeforeSend ||
@@ -10082,7 +10064,6 @@ export default function ChatView(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
-        setKeepFullHistory(routeThreadKey, false);
         // The turn is under way and will spend quota, so that thread's limits
         // snapshot is stale. Uploads may have outlasted a navigation, so only
         // the sending thread's panel clears.
@@ -11139,7 +11120,9 @@ export default function ChatView(props: ChatViewProps) {
           configuredUrls={configuredPreviewUrls}
           visible={rightPanelOpen}
           onSendAnnotation={(annotation, image) => {
-            void onSend(undefined, "auto", "foreground", { annotation, image });
+            void onSend(undefined, "auto", "foreground", {
+              directAnnotation: { annotation, image },
+            });
           }}
         />
       </Suspense>
@@ -11812,8 +11795,6 @@ export default function ChatView(props: ChatViewProps) {
                               queuedRunsControl={queuedRunsControl}
                               bannerItems={composerBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}
-                              keepFullHistory={keepFullHistory}
-                              onToggleKeepFullHistory={toggleKeepFullHistory}
                               // With attachments or contexts aboard the pick just inserts the
                               // text, so it sends as a prompt like the typed path would.
                               onUsageLimitsCommand={

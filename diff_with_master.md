@@ -310,6 +310,17 @@ Tests: `Adapters/OpenCode2AdapterV2.test.ts` (`t3Rules` and the fork/session-get
 fixtures `testkit/fixtures/opencode2_fork` and `opencode2_switch`, which pin the outbound
 `session.update` rules.
 
+## 18. Compact chip compacts only on click
+
+Upstream's Compact chip (#16631, #17127; TTL in §16) was a toggle that defaulted to on, so Enter on a stale Claude thread
+started a `/compact` run and queued the message behind it. In the fork the chip is a one-shot
+action: Enter and the send button always send with full history, and clicking the chip compacts
+first and then sends the draft (with an empty composer it only runs `/compact`). The collapsed
+mobile composer's send button sends directly instead of expanding to show the chip.
+`ComposerPrimaryActions.tsx` renders the chip, `ChatComposer.tsx` (`compactAndSend`) routes the
+click, and `ChatView.tsx` `onSend` compacts first only when called with `compactFirst`. There is no
+per-thread Full/Compact state any more. User doc: `docs/user/providers-claude.md`.
+
 ## Non-product files in the delta
 
 - `README.md` — fork section.

@@ -1398,8 +1398,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   compactDisabled: boolean;
   compactDisabledReason: string | null;
   compactBeforeSendTokens: number | null;
-  keepFullHistory: boolean;
-  onToggleKeepFullHistory: () => void;
+  onCompactAndSend: () => void;
 }) {
   return (
     <>
@@ -1440,8 +1439,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         onInterrupt={props.onInterrupt}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
         compactBeforeSendTokens={props.compactBeforeSendTokens}
-        keepFullHistory={props.keepFullHistory}
-        onToggleKeepFullHistory={props.onToggleKeepFullHistory}
+        onCompactAndSend={props.onCompactAndSend}
       />
     </>
   );
@@ -1564,10 +1562,6 @@ export interface ChatComposerProps {
   bannerItems: readonly ComposerBannerStackItem[];
   /** Tokens a stale session would re-read; null when the thread is not offered compaction. */
   resumeCompactionTokens: number | null;
-  /** The Compact chip is off, so the next send keeps full history. */
-  keepFullHistory: boolean;
-  /** Flips the Compact chip for the active thread. */
-  onToggleKeepFullHistory: () => void;
   /** Picking /usage-limits from the menu is the action itself; the draft keeps nothing of it. */
   onUsageLimitsCommand?: (() => void) | undefined;
   environmentUnavailable: {
@@ -1674,6 +1668,7 @@ export interface ChatComposerProps {
     e?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
+    options?: { compactFirst?: boolean },
   ) => void;
   onResume: () => void;
   onInterrupt: () => void;
@@ -3068,11 +3063,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectSelectionRequired ||
     environmentUnavailable !== null ||
     (!composerSendState.hasSendableContent && !showResumeAction);
-  const collapsedComposerPrimaryActionLabel = showResumeAction
-    ? "Resume thread"
-    : props.resumeCompactionTokens !== null && !props.keepFullHistory
-      ? "Open composer to compact and send"
-      : "Send message";
+  const collapsedComposerPrimaryActionLabel = showResumeAction ? "Resume thread" : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -4257,6 +4248,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       event?: { preventDefault: () => void },
       dispatchMode?: ComposerDispatchMode,
       submissionIntent?: ComposerSubmissionIntent,
+      compactFirst = false,
     ) => {
       if (
         noProviderAvailable ||
@@ -4310,6 +4302,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 activeTurnDefault: settings.followUpBehavior,
               }),
             submissionIntent,
+            { compactFirst },
           );
           return !providerInputRejectedRef.current;
         },
@@ -4389,6 +4382,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pendingUserInputs.length,
     phase,
   ]);
+  // Чип Compact: с черновиком сжимает историю и отправляет его, без черновика просто сжимает.
+  const compactAndSend = useCallback(() => {
+    if (composerSendState.hasSendableContent) submitComposer(undefined, undefined, undefined, true);
+    else compactThreadContext();
+  }, [compactThreadContext, composerSendState.hasSendableContent, submitComposer]);
   const expandMobileComposer = useCallback(() => {
     if (composerBlurFrameRef.current !== null) {
       window.cancelAnimationFrame(composerBlurFrameRef.current);
@@ -7083,9 +7081,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onClick={(event) => {
                     event.stopPropagation();
                     if (showResumeAction) onResume();
-                    // Compacting first only sends from the expanded composer, where the chip shows it.
-                    else if (props.resumeCompactionTokens !== null && !props.keepFullHistory)
-                      expandMobileComposer();
                     else submitComposer();
                   }}
                 >
@@ -7801,8 +7796,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onInterrupt={handleInterruptPrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                     compactBeforeSendTokens={props.resumeCompactionTokens}
-                    keepFullHistory={props.keepFullHistory}
-                    onToggleKeepFullHistory={props.onToggleKeepFullHistory}
+                    onCompactAndSend={compactAndSend}
                     compactDisabled={
                       compactDisabled || noProviderAvailable || isSendBusy || isConnecting
                     }
