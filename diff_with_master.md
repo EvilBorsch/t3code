@@ -296,19 +296,24 @@ keep 5 minutes. The memory is not persisted across server restarts. Tests in
 
 ## 17. OpenCode full access reaches outside the workspace again
 
-The V2 rewrite dropped a rule the V1 adapter always sent. The full-access branch of
-`sessionRules` in `packages/provider-opencode/src/server/v2/adapter.ts` emitted only
-`{ action: "*", effect: "allow" }`; OpenCode's default `build`/`plan` agents carry an
-`external_directory → ask` rule that the `*` wildcard does not cover, so full access was
-silently confined to the project directory and every read/write outside it prompted for
-approval. V1 (`OpenCodeRuntime.buildOpenCodePermissionRules`) had always sent an explicit
-`external_directory → allow`. The full-access branch now sends both rules again, in the same
-order (`*`, then `external_directory`).
+Both adapters' full-access rules sent only `*`, which left OpenCode's `external_directory → ask`
+default in force, so full-access sessions prompted for every path outside the project. Both now
+send `*` and then an explicit `external_directory → allow`.
 
-Tests: `Adapters/OpenCode2AdapterV2.test.ts` (`t3Rules` and the fork/session-get expectations),
-`OpenCode2OrchestratorV2.integration.test.ts` (`FULL_ACCESS`, `planRules`), and the recorded
-fixtures `testkit/fixtures/opencode2_fork` and `opencode2_switch`, which pin the outbound
-`session.update` rules.
+- **V2** (`sessionRules` in `packages/provider-opencode/src/server/v2/adapter.ts`): the
+  default `build`/`plan` agents carry the `ask` rule and `*` did not override it.
+- **V1** (`openCodePermissionRules` in `packages/provider-opencode/src/server/adapter.ts`,
+  OpenCode 1.x): `*` does override the parent session, but subagents are where it leaks.
+  OpenCode's task tool seeds a child session with only the parent's `external_directory` and
+  `deny` rules (`deriveSubagentSessionPermission`), and the child's prompt loop reads the
+  session once at start. The complete policy T3 installs through `session.update` after
+  `emitSubagent` therefore never reaches a running subagent, which kept the `general` agent's
+  `external_directory → ask` for its whole run. The explicit rule is inherited at creation.
+
+Tests: `adapter.test.ts` ("lets a full-access subagent reach outside the project from its
+first step"), `Adapters/OpenCode2AdapterV2.test.ts`, `OpenCode2OrchestratorV2.integration.test.ts`,
+and the recorded fixtures `opencode_subagent`, `opencode_running_child_approval`,
+`opencode2_fork` and `opencode2_switch`.
 
 ## 18. Compact chip compacts only on click
 

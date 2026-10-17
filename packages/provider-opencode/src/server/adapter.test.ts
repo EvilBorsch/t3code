@@ -2767,6 +2767,22 @@ describe("OpenCodeAdapterV2", () => {
     assert.equal(permissionAction(childApprovalRules, "task"), "deny");
   });
 
+  it("lets a full-access subagent reach outside the project from its first step", () => {
+    // OpenCode seeds a task-created child with only the parent's deny and
+    // external_directory rules, after the subagent's own defaults, and the
+    // child's run keeps that snapshot even once the complete policy lands.
+    const parentRules = openCodePermissionRules(runtimePolicy("full-access"));
+    const seededChildRules: ReturnType<typeof openCodePermissionRules> = [
+      { permission: "external_directory", pattern: "*", action: "ask" },
+      ...parentRules.filter(
+        (rule) => rule.permission === "external_directory" || rule.action === "deny",
+      ),
+      { permission: "task", pattern: "*", action: "deny" },
+    ];
+
+    assert.equal(permissionAction(seededChildRules, "external_directory"), "allow");
+  });
+
   it("uses the next native user message as the exclusive fork and revert boundary", () => {
     const first = providerTurn({ id: "turn:first", ordinal: 1, nativeId: "msg-user-1" });
     const synthetic = providerTurn({ id: "turn:synthetic", ordinal: 2, nativeId: null });

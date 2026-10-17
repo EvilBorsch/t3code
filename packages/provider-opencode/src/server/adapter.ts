@@ -633,7 +633,13 @@ export function openCodePermissionRules(
     sandboxType === undefined && runtimePolicy.runtimeMode === "full-access";
 
   if (!requiresApproval && (externallySandboxed || dangerFullAccess || implicitFullAccess)) {
-    return [{ permission: "*", pattern: "*", action: "allow" }];
+    return [
+      { permission: "*", pattern: "*", action: "allow" },
+      // A task-created child inherits only explicit external_directory and deny
+      // rules, and its run keeps that snapshot, so `*` alone leaves subagents
+      // asking for every path outside the project.
+      { permission: "external_directory", pattern: "*", action: "allow" },
+    ];
   }
 
   // Task sessions initially inherit only parent deny rules. Seed explicit
