@@ -170,6 +170,9 @@ sidebar: subagent threads are hidden by `filterSidebarV2VisibleThreads` (`partit
 folders, counts, jump keys, sorting), and the active row is revealed by `sidebar/routeReveal.ts`,
 including inside a collapsed folder. The fork keeps only:
 
+- No draft cards in boring mode: `Sidebar.tsx` skips upstream's `SidebarDraftBlock` (unsent
+  composer drafts drawn as cards above the folders) and counts zero visible drafts, so the
+  sidebar is folders only, like the old legacy sidebar. The default mode keeps the block.
 - `CommandPalette.tsx` `openProjectFromSearch` expands the project's folder with
   `sidebarFolderExpansionKeys(group)`.
 - `DesktopOpenWorkspaceListener.tsx` (§5) expands with the same keys, built from
