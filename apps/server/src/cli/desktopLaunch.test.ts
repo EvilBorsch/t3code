@@ -22,14 +22,18 @@ import {
 } from "./desktopLaunch.ts";
 import { DesktopOpenWorkspacePathError } from "./open.ts";
 
-it("prefers Nightly over Alpha on macOS", () => {
+const encodeRuntimeState = Schema.encodeEffect(Schema.fromJsonString(PersistedServerRuntimeState));
+
+it("prefers Nightly, then Beta, then the pre-Beta Alpha name on macOS", () => {
   const candidates = listDesktopBinaryCandidates({
     platform: "darwin",
     homeDirectory: "/Users/test",
     env: {},
   });
-  assert.equal(candidates[0]?.label, "T3 Code (Nightly)");
-  assert.ok(candidates.some((candidate) => candidate.label === "T3 Code (Alpha)"));
+  assert.deepStrictEqual(
+    candidates.slice(0, 4).map((candidate) => candidate.label),
+    ["T3 Code (Nightly)", "T3 Code (Beta)", "T3 Code (Alpha)", "T3 Code"],
+  );
 });
 
 it("resolves T3CODE_DESKTOP_BINARY first when executable", () => {
@@ -98,11 +102,10 @@ it.effect("bare t3 stays a server launch when a desktop app is installed", () =>
     (baseDir) =>
       Effect.gen(function* () {
         const stateDir = NodePath.join(baseDir, "userdata");
-        const record = yield* Schema.encodeEffect(
-          Schema.fromJsonString(PersistedServerRuntimeState),
-        )({
+        const record = yield* encodeRuntimeState({
           version: 1,
-          pid: process.pid,
+          // Живой чужой процесс: запись с собственным PID CLI считает оставшейся от убитого контейнера.
+          pid: process.ppid,
           port: 3773,
           origin: "http://127.0.0.1:3773",
           startedAt: "2026-10-01T00:00:00.000Z",

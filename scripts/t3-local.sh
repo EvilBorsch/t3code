@@ -1,7 +1,7 @@
 #!/bin/bash
 # Local CLI wrapper: use the rebuilt `t3` from this checkout, but prefer the
 # installed desktop app (Nightly in /Applications) — do NOT force the local
-# Alpha/.electron-runtime launcher.
+# Beta/.electron-runtime launcher.
 #
 # Opt into the local rebuilt desktop only when debugging desktop itself:
 #   T3CODE_USE_LOCAL_DESKTOP=1 t3 .
@@ -19,7 +19,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [[ "${T3CODE_USE_LOCAL_DESKTOP:-}" == "1" ]]; then
   export T3CODE_DESKTOP_BINARY="$REPO_ROOT/scripts/t3-code-desktop-local.mjs"
 else
-  # Ensure a leftover override from the shell does not force Alpha/local.
+  # Ensure a leftover override from the shell does not force Beta/local.
   unset T3CODE_DESKTOP_BINARY
 fi
 

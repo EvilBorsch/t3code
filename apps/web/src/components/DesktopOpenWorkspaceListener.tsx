@@ -6,17 +6,16 @@ import { useAtomValue } from "@effect/atom-react";
 import { isElectron } from "../env";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useClientSettings } from "../hooks/useSettings";
-import {
-  deriveLogicalProjectKeyFromSettings,
-  selectProjectGroupingSettings,
-} from "../logicalProject";
+import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import { openWorkspaceInDesktop } from "../lib/openWorkspaceIntent";
-import { readProject, readProjects, waitForProject } from "../state/entities";
+import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import { readProjects, waitForProject } from "../state/entities";
 import { primaryServerProvidersAtom } from "../state/server";
 import { usePrimaryEnvironment } from "../state/environments";
 import { projectEnvironment } from "../state/projects";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useUiStateStore } from "../uiStateStore";
+import { sidebarFolderExpansionKeys } from "./Sidebar.logic";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
 export function DesktopOpenWorkspaceListener() {
@@ -42,11 +41,29 @@ export function DesktopOpenWorkspaceListener() {
         waitForProject,
         handleNewThread,
         expandProject: (projectRef) => {
-          const project = readProject(projectRef);
-          const projectKey = project
-            ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
-            : `${projectRef.environmentId}:${projectRef.projectId}`;
-          useUiStateStore.getState().setProjectExpanded(projectKey, true);
+          // Раскрываем теми же ключами, что проверяет папка сайдбара: иначе сохранённый
+          // `false` у папки репозитория или scratch-группы перевесит.
+          const group = buildSidebarProjectSnapshots({
+            projects: readProjects(),
+            settings: projectGroupingSettings,
+            groupScratchProjects: true,
+            primaryEnvironmentId: targetEnvironmentId,
+            resolveEnvironmentLabel: () => null,
+          }).find((candidate) =>
+            candidate.memberProjectRefs.some(
+              (ref) =>
+                ref.environmentId === projectRef.environmentId &&
+                ref.projectId === projectRef.projectId,
+            ),
+          );
+          useUiStateStore
+            .getState()
+            .setProjectExpanded(
+              group
+                ? sidebarFolderExpansionKeys(group)
+                : `${projectRef.environmentId}:${projectRef.projectId}`,
+              true,
+            );
         },
         onError: (title, description) => {
           toastManager.add(stackedThreadToast({ type: "error", title, description }));
@@ -54,6 +71,7 @@ export function DesktopOpenWorkspaceListener() {
       }),
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- подписка на IPC-интенты desktop-моста, пока подключено окружение
   useEffect(() => {
     const bridge = isElectron ? window.desktopBridge : undefined;
     if (
@@ -73,14 +91,13 @@ export function DesktopOpenWorkspaceListener() {
         return;
       }
       inFlightKeyRef.current = key;
-      try {
-        await openIntent(intent, environmentId);
-        await bridge.ackOpenWorkspace();
-      } finally {
-        if (inFlightKeyRef.current === key) {
-          inFlightKeyRef.current = null;
-        }
-      }
+      await openIntent(intent, environmentId)
+        .then(() => bridge.ackOpenWorkspace())
+        .finally(() => {
+          if (inFlightKeyRef.current === key) {
+            inFlightKeyRef.current = null;
+          }
+        });
     };
 
     const unsubscribe = bridge.onOpenWorkspace((intent) => {

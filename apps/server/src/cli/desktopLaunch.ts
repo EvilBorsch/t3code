@@ -50,7 +50,12 @@ export type DesktopLaunchCandidate = {
   readonly appBundlePath?: string;
 };
 
-const MAC_APP_NAMES = ["T3 Code (Nightly)", "T3 Code (Alpha)", "T3 Code"] as const;
+const DESKTOP_APP_NAMES = [
+  "T3 Code (Nightly)",
+  "T3 Code (Beta)",
+  "T3 Code (Alpha)",
+  "T3 Code",
+] as const;
 
 const isExecutableFile = (filePath: string): boolean => {
   try {
@@ -105,7 +110,7 @@ export function listDesktopBinaryCandidates(input: {
   if (input.platform === "darwin") {
     const searchRoots = ["/Applications", NodePath.join(homeDirectory, "Applications")];
     for (const root of searchRoots) {
-      for (const appName of MAC_APP_NAMES) {
+      for (const appName of DESKTOP_APP_NAMES) {
         const appBundlePath = NodePath.join(root, `${appName}.app`);
         pushCandidate(macBinaryForAppBundle(appBundlePath, appName), appName, appBundlePath);
       }
@@ -118,9 +123,9 @@ export function listDesktopBinaryCandidates(input: {
       ...(programFiles ? [programFiles] : []),
     ];
     for (const root of winRoots) {
-      pushCandidate(NodePath.join(root, "T3 Code (Nightly)", "t3code.exe"), "T3 Code (Nightly)");
-      pushCandidate(NodePath.join(root, "T3 Code (Alpha)", "t3code.exe"), "T3 Code (Alpha)");
-      pushCandidate(NodePath.join(root, "T3 Code", "t3code.exe"), "T3 Code");
+      for (const appName of DESKTOP_APP_NAMES) {
+        pushCandidate(NodePath.join(root, appName, "t3code.exe"), appName);
+      }
     }
   } else {
     pushCandidate("/usr/bin/t3code", "t3code");

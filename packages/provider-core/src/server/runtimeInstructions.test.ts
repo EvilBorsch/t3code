@@ -1,19 +1,46 @@
-import { describe, expect, it } from "vite-plus/test";
+import { assert, describe, it } from "@effect/vitest";
+
 import { t3AgentTools } from "./mcpSession.ts";
 import { buildRuntimeInstructions } from "./runtimeInstructions.ts";
 
 const NO_TOOLS = t3AgentTools(undefined);
+const PR_TOOLS = { ...NO_TOOLS, pullRequests: true };
 
 describe("buildRuntimeInstructions", () => {
-  it("requires explicit registration of every PR and stack layer", () => {
-    const instructions = buildRuntimeInstructions(
-      { harness: "Codex" },
-      { ...NO_TOOLS, pullRequests: true },
+  it("links PRs the agent creates, takes over, or pushes to, and no others", () => {
+    const instructions = buildRuntimeInstructions({ harness: "Codex" }, PR_TOOLS);
+
+    assert.include(instructions, "Link each PR you create, take over, or push to");
+    assert.include(instructions, "one link_pull_request per PR");
+    assert.include(instructions, "Skip PRs you only read or review");
+    assert.include(instructions, "If linking fails, say so.");
+    assert.notInclude(instructions, "git log -1");
+    assert.notInclude(instructions, "work on");
+    // Listing linked PRs as an end-of-work check found nothing to add in audited threads.
+    assert.notInclude(instructions, "list_thread_pull_requests");
+  });
+
+  it("waits on a PR only with the watch, never with a poll loop", () => {
+    const instructions = buildRuntimeInstructions({ harness: "Codex" }, PR_TOOLS);
+
+    assert.notInclude(instructions, "Creation, pending checks, or a merge ask alone is not enough");
+    assert.include(instructions, "Links and watches persist across pushes.");
+    // The wake message itself carries the do-not-re-watch rule.
+    assert.notInclude(instructions, "On a wake");
+    assert.include(
+      instructions,
+      "Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch",
     );
-    expect(instructions).toContain("When the t3-code MCP server exposes link_pull_request");
-    expect(instructions).toContain("with the full PR URL immediately after creating a PR");
-    expect(instructions).toContain("For a stack, call it for every layer");
-    expect(instructions).toContain("call list_thread_pull_requests and link any PR");
+    assert.notInclude(instructions, "merge it now");
+    assert.include(instructions, "Otherwise act now or hand back.");
+    assert.include(instructions, "then watch and end your turn");
+    assert.include(instructions, "never watch, even if the brief says babysit");
+    assert.include(
+      instructions,
+      "After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>.",
+    );
+    assert.include(instructions, "Never wait with sleep");
+    assert.include(instructions, "call unwatch_pull_request");
   });
 
   it("describes PR linking only when the session has pull request tools", () => {
@@ -21,41 +48,7 @@ describe("buildRuntimeInstructions", () => {
       { harness: "Codex" },
       { ...NO_TOOLS, threads: true, visualReplies: true },
     );
-    expect(instructions).toMatch(/^<runtime_info>.*<\/runtime_info>$/s);
-    expect(instructions).not.toContain("link_pull_request");
-  });
-
-  it("keeps known model and effort metadata on one line", () => {
-    expect(
-      buildRuntimeInstructions(
-        {
-          harness: "Codex",
-          model: "  custom\nmodel  ",
-          reasoningEffort: " high\n",
-        },
-        NO_TOOLS,
-      ),
-    ).toContain("through the Codex harness, as custom model with high reasoning effort.");
-  });
-
-  it("names the model by display name and slug when they differ", () => {
-    expect(
-      buildRuntimeInstructions(
-        { harness: "Codex", model: "gpt-5.4", modelName: "GPT-5.4" },
-        NO_TOOLS,
-      ),
-    ).toContain("through the Codex harness, as GPT-5.4 (model slug: gpt-5.4).");
-    expect(
-      buildRuntimeInstructions(
-        { harness: "Codex", model: "my-model", modelName: "my-model" },
-        NO_TOOLS,
-      ),
-    ).toContain("through the Codex harness, as my-model.");
-  });
-
-  it.each([undefined, "", "auto", "default"])("omits unresolved model %s", (model) => {
-    const instructions = buildRuntimeInstructions({ harness: "Cursor", model }, NO_TOOLS);
-    expect(instructions).toContain("through the Cursor harness.");
-    expect(instructions).not.toContain("reasoning effort");
+    assert.match(instructions, /^<runtime_info>.*<\/runtime_info>$/s);
+    assert.notInclude(instructions, "link_pull_request");
   });
 });

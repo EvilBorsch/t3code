@@ -1,5 +1,4 @@
 import type { ServerProvider } from "@t3tools/contracts";
-import { useMemo } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -127,7 +126,7 @@ export function ProviderUsageMeter({ provider }: { readonly provider: ServerProv
   const limits = provider?.usageLimits;
   // Общий минутный тик приложения: точнее для "resets in" не нужно.
   const nowMs = Date.parse(`${useNowMinute()}:00.000Z`);
-  const windows = useMemo(() => presentUsageWindows(limits, nowMs), [limits, nowMs]);
+  const windows = presentUsageWindows(limits, nowMs);
   if (!provider || !limits || windows.length === 0) return null;
 
   const providerName = provider.displayName?.trim() || String(provider.driver);

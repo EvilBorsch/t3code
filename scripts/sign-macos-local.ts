@@ -1,12 +1,8 @@
 import { sign } from "@electron/osx-sign";
 
-// Без сертификата electron-builder не подписывает macOS-сборку вовсе, и бандл остаётся
-// со стоковой linker-подписью Electron, которая не покрывает ресурсы и Info.plist.
-// macOS не может сверить такое приложение с выданными разрешениями, поэтому TCC
-// спрашивает доступ к папкам снова и снова. Ad-hoc подпись всего бандла даёт валидную
-// подпись с устойчивым cdhash. Именованный сертификат в T3CODE_DESKTOP_LOCAL_SIGN_IDENTITY
-// (например, самоподписанный из «Связки ключей») даёт идентичность, которая переживает
-// пересборки, и разрешения сохраняются между версиями.
+// Без сертификата бандл остаётся со стоковой linker-подписью Electron, и TCC снова и снова
+// спрашивает доступ к папкам. Ad-hoc подпись всего бандла это чинит; самоподписанный
+// сертификат в T3CODE_DESKTOP_LOCAL_SIGN_IDENTITY сохраняет разрешения между пересборками.
 export default async function signMacosLocal(context: {
   readonly electronPlatformName: string;
   readonly appOutDir: string;

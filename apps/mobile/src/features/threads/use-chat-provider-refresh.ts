@@ -18,6 +18,7 @@ export function useChatProviderRefresh(
     reportDefect: false,
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the environment's providers once per opened chat after its connection comes up
   useEffect(() => {
     if (!focused || environmentId === null || chatId === null) {
       entry.current = null;

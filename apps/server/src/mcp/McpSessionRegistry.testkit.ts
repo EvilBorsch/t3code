@@ -19,6 +19,7 @@ export const layer = Layer.succeed(
           capabilities: new Set(["orchestration", "worktree", "pull-requests", "html", "preview"]),
         },
       }),
+    // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
     resolve: () => Effect.succeed(undefined),
     touch: () => Effect.void,
     revokeProviderSession: () => Effect.void,

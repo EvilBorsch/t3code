@@ -8,11 +8,12 @@
 > This file describes the **current** delta only. Features upstream has since absorbed, or that
 > its rewrites made obsolete, are listed once under _Absorbed or obsolete_ so nobody re-adds them.
 
-**Sync status 2026-10-14:** merged `origin/main` at `6524a8d437` (desktop `0.0.45`). This merge
-brought upstream's orchestration V2 rewrite (#2829): the server's V1 `orchestration/` layer is
-gone, providers live in `orchestration-v2/Adapters/*` and `packages/provider-*`, the client read
-model is V2, and the server keeps its state in `statev2.sqlite` (copied once from `state.sqlite`
-on first start; the V1 file is left alone). Re-check with:
+**Sync status 2026-10-28:** merged `origin/main` at `eb751fa073` (desktop `0.1.3`) on branch
+`fix-claude-usage-master-merge-1028`; the pre-merge fork stays on `fix-claude-usage-master`. This
+merge brought upstream's deletion of `LegacySidebar.tsx` (the `legacySidebarEnabled` setting now
+opens the "boring sidebar" mode of `Sidebar.tsx`), a rewritten composer and design, pnpm 12 /
+vite-plus 1.4 (update the global `vp` with `vp upgrade`), and state migrations 062–072 — 063 drops
+the V1 projections, so a pre-merge build cannot reopen the migrated `statev2.sqlite`. Re-check with:
 
 ```bash
 git fetch origin main
@@ -50,8 +51,9 @@ and remaining quota visible while working.
   (`Session · 42% used · resets in 2h 13m`) and a "Usage limits" section in the provider
   editor built on upstream's `LimitWindows` bars, placed after upstream's setup section.
 - `ChatComposer.tsx` passes `selectedProviderStatus` into `ComposerFooterPrimaryActions`
-  as `usageProvider`; the meter renders first in that footer. Upstream measures the resting
-  actions' width, so the rings need no reserved padding.
+  (`chat/ComposerFooterControls.tsx`) as `usageProvider`; the meter renders first in that
+  footer, then the context ring, then the Compact chip and send button. Upstream measures the
+  resting actions' width, so the rings need no reserved padding.
 - Clock is the shared minute tick (`hooks/useNowMinute`), never a per-component timer.
 - Codex can report only a weekly window on some plans (`primary` = 7d, `secondary` null);
   a single `7d` ring is data, not a bug.
@@ -69,23 +71,12 @@ context window:
   entry and its legacy-target id are removed. The contract field stays so stored client
   settings keep decoding.
 
-## 3. Claude capability probe runs in a neutral directory
+## 3. Send refuses a logged-out provider
 
-`apps/server/src/provider/Drivers/ClaudeDriver.ts` passes `os.tmpdir()` as the probe cwd, cache
-key and `checkClaudeProviderStatus` cwd instead of the server cwd. Claude Code scans its working
-directory on initialization; measured: `/tmp` ~0.6s, a project ~0.4s, `$HOME` **~58s**. The
-desktop server's cwd is `$HOME`, so upstream's choice blows the probe budget on every refresh and
-the provider card sticks on _"Could not verify Claude authentication status…"_ while turns keep
-working. Guarded by "probes Claude capabilities from the temp directory" in
-`provider/ProviderInstanceRegistry.test.ts`: the fixture Claude binary
-(`provider/testing/ProviderInstanceRegistryLive.fixture.mjs`) records its cwd when
-`T3_CLAUDE_PROBE_CWD_FILE` is set.
-
-`ChatView.tsx` additionally refuses to send when the selected provider reports
-`auth.status === "unauthenticated"` (with the server's message). Upstream only excludes such
-providers from load balancing.
-
-**Do not regress:** never point the probe at the server cwd. A project directory would be fine.
+`chat/useComposerSend.ts` (`onSend`) refuses to send when the selected provider reports
+`auth.status === "unauthenticated"` (with the server's message), before any side effect.
+Upstream only blocks sends for Antigravity and excludes such providers from load balancing.
+(The former Claude probe-cwd patch is absorbed, see below.)
 
 ## 4. Terminal / node-pty under packaged Electron
 
@@ -103,7 +94,7 @@ providers from load balancing.
 ## 5. `t3 .` / `t3 open` → desktop workspace with a new draft thread
 
 **UX.** `t3 .`, `t3 open .`, `t3 open <path>` resolve the directory, find the installed desktop
-app (Nightly → Alpha → `T3 Code`, or `T3CODE_DESKTOP_BINARY` / `T3CODE_DESKTOP_APP`), hand it
+app (Nightly → Beta → Alpha → `T3 Code`, or `T3CODE_DESKTOP_BINARY` / `T3CODE_DESKTOP_APP`), hand it
 an open-workspace intent, and the renderer creates the project if missing, waits until it is
 in the read model, expands it and opens a **new draft** (pencil semantics, no server thread
 until first send). `t3 <path>` with no server flag (any flag except `--cwd`) goes to the desktop
@@ -171,20 +162,23 @@ scrolls to the prompt, and collapsing a fold scrolls back to its prompt (decided
 `TurnFoldTimelineRow` from `row.expanded`), since a long turn leaves the viewport on the final
 reply. `chat/MessagesTimeline.tsx`, `MessagesTimeline.logic.ts` (+ test).
 
-## 8. Sidebar follows the open thread
+## 8. Opening a project expands its sidebar folder
 
-`Sidebar.logic.ts` — `useRevealActiveThreadRow(routeThreadKey)` scrolls the active thread's row
-into view on route change, and `requestSidebarThreadReveal` does the same after a command-palette
-selection (`CommandPalette.tsx` also clears the project scope and expands the target project).
-Rows are found by upstream's `data-thread-item={threadKey}` attribute, which `LegacySidebar.tsx`
-now sets too; upstream's motion clones drop it, so a row animating out is never the target. The
-legacy sidebar also keeps the open thread visible as the only row of a collapsed project, and
-beyond the preview count of an expanded one. Test: `Sidebar.reveal.test.tsx`.
+The user runs `legacySidebarEnabled: true`, which upstream now maps to the boring-sidebar mode of
+`Sidebar.tsx` (project folders). Upstream covers what the fork used to patch into the legacy
+sidebar: subagent threads are hidden by `filterSidebarV2VisibleThreads` (`partitionSidebarThreads`,
+folders, counts, jump keys, sorting), and the active row is revealed by `sidebar/routeReveal.ts`,
+including inside a collapsed folder. The fork keeps only:
 
-Orchestration V2 models subagents as real child threads (`lineage.relationshipToParent ===
-"subagent"`). Upstream's new sidebar hides them with `filterSidebarV2VisibleThreads`, but its
-legacy sidebar still listed them as ordinary rows. `LegacySidebar.tsx` now uses the same filter for
-project rows, project sorting and jump-key order; subagents stay in the parent's timeline.
+- `CommandPalette.tsx` `openProjectFromSearch` expands the project's folder with
+  `sidebarFolderExpansionKeys(group)`.
+- `DesktopOpenWorkspaceListener.tsx` (§5) expands with the same keys, built from
+  `buildSidebarProjectSnapshots({ groupScratchProjects: true })`, so a stored `false` on a
+  repository or scratch folder cannot win.
+- Test: "keeps subagent threads out of boring folders and drops a folder holding only subagents"
+  in `Sidebar.logic.test.ts`.
+
+Known gap: picking the thread that is already open does not re-scroll (the route does not change).
 
 ## 9. Composer OS file drop → path mentions
 
@@ -192,7 +186,8 @@ project rows, project sorting and jump-key order; subagents stay in the parent's
 (upstream's `folderDropTarget(...) === "local"`), a dropped file whose absolute path the desktop
 bridge resolves (`DesktopBridge.getPathForFile`, upstream's) becomes an `@` path mention. Images,
 browser drops, path-less files and every drop into a remote environment go through upstream's
-attachments. Upstream's own `addDroppedFolders` handles folders. Wired in `ChatComposer.tsx`.
+attachments. Upstream's own `addDroppedFolders` handles folders. Wired in `ChatComposer.tsx`
+`addDroppedFiles`.
 
 ## 10. Codex model reroute notice in the work log
 
@@ -209,7 +204,10 @@ not processed, so a refused partial answer can stay visible.
 `apps/web/src/lib/syntaxHighlighting.ts` — `claimSyntaxHighlighterEngine()`, called in
 `main.tsx` before the first render. `getSharedHighlighter` keeps one highlighter per document
 and the first caller picks the regex engine; without the early claim the diff panel could
-create it on the JS engine and stall the chat. Test: `syntaxHighlighting.engine.test.ts`.
+create it on the JS engine and stall the chat. Upstream's call sites now pass
+`PREFERRED_HIGHLIGHTER`, so the claim is mostly a guard; `@pierre/diffs` still defaults to
+`shiki-js` for a caller that omits it. Test: `syntaxHighlighting.engine.test.ts` (asserts the
+highlighter name).
 
 ## 12. Agent browser access off by default
 
@@ -227,9 +225,10 @@ identity that survives rebuilds. Documented in `docs/operations/development.md`.
 
 ## 14. Providers refresh when a chat opens
 
-`apps/web/src/hooks/useChatProviderRefresh.ts` (wired in `ChatView.tsx`) and
+`apps/web/src/hooks/useChatProviderRefresh.ts` (wired in `ChatView.tsx`; test
+`useChatProviderRefresh.browser.test.tsx`) and
 `apps/mobile/src/features/threads/use-chat-provider-refresh.ts` (wired in `ThreadRouteScreen.tsx`
-and `NewTaskDraftScreen.tsx`), + tests — once per opened chat, after the environment connects,
+and `NewTaskDraftScreen.tsx`, + test) — once per opened chat, after the environment connects,
 refresh every provider with `refreshModels: true`, so a provider that recovered (logged in,
 updated CLI) becomes selectable without a trip to Settings. Upstream refreshes only the selected
 instance's stale workspace snapshot (web) or on pull-to-refresh in the model picker (mobile).
@@ -241,7 +240,8 @@ and appends long orchestration and PR-linking instructions; tools a session may 
 (`preview_*`, `device_*`) were still listed and refused at call time. The user wants a request from
 T3 to reach Claude Code / Codex like their own CLI, opting into T3 extras one group at a time.
 
-**What.** Five server settings, project-scoped, under **Settings → Integrations**:
+**What.** Five server settings, project-scoped, under **Settings → Browser → Agent access**
+(upstream removed the Integrations page; `/settings/integrations` redirects there):
 
 | Setting                               | MCP capability              | Prompt text                                                | Default   |
 | ------------------------------------- | --------------------------- | ---------------------------------------------------------- | --------- |
@@ -264,20 +264,30 @@ upstream's.
 - `mcp/McpHttpServer.ts` — `toolkitCapabilities` maps each toolkit to its capability; the auth
   middleware filters `tools/list` responses and answers `tools/call` for a hidden tool with a
   JSON-RPC "not found" error without running it. A coverage test fails when a registered tool is
-  missing from the table: add every new upstream toolkit there.
+  missing from the table: add every new upstream toolkit there. Upstream's `McpSchema.EnabledWhen`
+  (used for `hiddenFromSubagents` / `hiddenWhileLinksOff`) would be the native mechanism, but
+  switching to it breaks upstream tests that expect the handler-level "capability missing" error.
 - `packages/provider-core/src/server/mcpSession.ts` — `T3AgentTools` / `t3AgentTools(session)`;
-  `orchestrationInstructions.ts` (visuals split into `T3_CODE_VISUAL_REPLY_INSTRUCTIONS`,
-  builders take `T3AgentTools`), `runtimeInstructions.ts` (PR block only with PR tools),
-  `handoffBudget.ts`. Every adapter passes `T3AgentTools` instead of a `hasT3Mcp` boolean:
-  `ClaudeAdapterV2`, `CodexAdapterV2` + `provider/CodexDeveloperInstructions.ts`, `provider-acp`,
-  `provider-cursor`, `provider-opencode` (v1, v2), `provider-muse`, `provider-pi`
-  (`T3_PI_SYSTEM_PROMPT`). Expect small, mechanical merge conflicts at those call sites.
+  `orchestrationInstructions.ts` builds on upstream's short sections: the orchestration sections
+  (incl. request_secret, environment and thread links) need thread tools, and in upstream's
+  "Visuals and preview" section the inline-chart bullet needs visual replies and the `preview_*`
+  bullet needs browser. With every group on the text equals upstream's.
+  `t3OrchestrationSections(tools)` feeds Codex's numbered entries. `runtimeInstructions.ts` (PR
+  block only with PR tools), `handoffBudget.ts`. Every adapter passes `T3AgentTools` instead of
+  a `hasT3Mcp` boolean: `ClaudeAdapterV2` (upstream's `t3_background_wait` text only with thread
+  tools), `CodexAdapterV2` via `buildCodexAdditionalContext` (upstream dropped
+  `developer_instructions`), `provider-acp`, `provider-cursor`, `provider-opencode` (v1, v2),
+  `provider-muse`, `provider-pi` (`T3_PI_SYSTEM_PROMPT`). `evals/mcp-tool-use/run.ts` and
+  `AgentContextBudget.test.ts` measure with every group on. Expect small, mechanical merge
+  conflicts at those call sites.
 - `ContextHandoffDelivery.ts` / `ProviderTurnStartService.ts` drop `t3_thread_read` hints at
   delivery when the receiving session lacks thread tools.
 - `packages/effect-codex-app-server/src/replay.ts` ignores `t3_code_*` `additionalContext` keys when
   matching `turn/start`, like `developer_instructions`.
-- UI: `settings/ProjectDefaultsSettings.tsx`, `settingsSearch.ts`, `SettingsPanels.tsx`; mobile
-  `SettingsServerControlsRouteScreen.tsx`. User doc: `docs/user/project-settings.md` → Agent tools.
+- UI: `settings/IntegrationsSettings.tsx` (`AgentToolGroupSettings`, rendered on the Browser page),
+  `ProjectDefaultsSettings.tsx`, `settingsSearch.ts`, `SettingsPanels.tsx`; mobile: the "Agent
+  tools" section of the threads settings screen. User doc: `docs/user/project-settings.md` →
+  Agent tools.
 
 **Tests.** `ProviderSessionManager.test.ts` (capability sets per settings, overrides, rotation,
 all-off), `McpHttpServer.test.ts` (filtered list, refused call, coverage), adapter tests for each
@@ -289,10 +299,14 @@ Upstream's Compact chip (#16631, #17127, #17945) appears when a large Claude thr
 looks expired, using the TTL of the latest response's cache write. Claude Code writes the
 conversation prefix with 1h entries but sometimes only a short tail with 5m, so a turn ending on such
 a write reported 5 minutes and the chip appeared after 5 minutes idle while the prefix stayed cached.
-`ClaudeAdapterV2.ts` remembers per native thread that a 1h write happened (until the next
-`compact_boundary`) and keeps reporting 1h; sessions that only write 5m (API key, Bedrock, Vertex)
-keep 5 minutes. The memory is not persisted across server restarts. Tests in
-`ClaudeAdapterV2.test.ts` ("prompt cache TTL" scenarios).
+`ClaudeAdapterV2.ts` remembers per native thread which model wrote 1h (until the next
+`compact_boundary`; a model switch forgets it, since each model has its own cache) and keeps
+reporting 1h; sessions that only write 5m (API key, Bedrock, Vertex) keep 5 minutes. The memory is
+not persisted across server restarts. The TTL also dates `promptCacheExpiresAt`, which upstream's
+idle compaction (`IdleCompaction.ts`, "Before the cache expires" beta) schedules from; without
+the fix that mode would compact ~3 minutes after a 5m tail write. Tests in
+`ClaudeAdapterV2.test.ts` ("prompt cache TTL" scenarios, "dates the idle compaction deadline an
+hour after a five-minute tail write").
 
 ## 17. OpenCode full access reaches outside the workspace again
 
@@ -317,14 +331,28 @@ and the recorded fixtures `opencode_subagent`, `opencode_running_child_approval`
 
 ## 18. Compact chip compacts only on click
 
-Upstream's Compact chip (#16631, #17127; TTL in §16) was a toggle that defaulted to on, so Enter on a stale Claude thread
-started a `/compact` run and queued the message behind it. In the fork the chip is a one-shot
-action: Enter and the send button always send with full history, and clicking the chip compacts
-first and then sends the draft (with an empty composer it only runs `/compact`). The collapsed
-mobile composer's send button sends directly instead of expanding to show the chip.
-`ComposerPrimaryActions.tsx` renders the chip, `ChatComposer.tsx` (`compactAndSend`) routes the
-click, and `ChatView.tsx` `onSend` compacts first only when called with `compactFirst`. There is no
-per-thread Full/Compact state any more. User doc: `docs/user/providers-claude.md`.
+Upstream's Compact chip (#16631, #17127, #25818 "Compact/Keep + tokens"; TTL in §16) is a
+toggle that defaults to Compact, so Enter on a stale Claude thread starts a `/compact` run and
+queues the message behind it. In the fork the chip is a one-shot action: Enter and the send
+button always send with full history, and clicking the chip compacts first and then sends the
+draft (with an empty composer it only runs `/compact`). The collapsed mobile composer's send
+button sends directly. `ComposerPrimaryActions.tsx` renders the chip (upstream's look, no
+pressed state), `ChatComposer.tsx` (`compactAndSend`) routes the click, `useComposerSend.ts`
+passes `options.compactFirst`, and `ChatView.logic.ts` `planComposerTurn` compacts only with
+`compactFirst` (test "sends with full history unless the Compact chip asked to compact first").
+There is no keep-full-history state. Upstream's idle-compaction setting still applies: "When you
+return" is this chip, "Never" hides it. User doc: `docs/user/providers-claude.md`.
+
+## 19. Telemetry off by default
+
+Upstream sends product events and relay traces unless `T3CODE_TELEMETRY_ENABLED=false`. The fork
+inverts the default; `T3CODE_TELEMETRY_ENABLED=true` opts in. One default per layer:
+`apps/server/src/telemetry/AnalyticsService.ts` (`withDefault(false)`),
+`packages/shared/src/otelEnvironment.ts` `isRelayTracingEnabled` (server relay client,
+`t3 connect`, desktop `getRelayTelemetryEnabled`), `apps/web/src/cloud/publicConfig.ts` (exports
+only when the desktop bridge says `true`). Tests: `AnalyticsService.test.ts`,
+`otelEnvironment.test.ts`, desktop `ipc/methods/window.test.ts`, web `lib/runtime.test.ts`. User
+doc: `docs/user/telemetry.md`. Not covered: mobile store builds (own Settings toggle).
 
 ## Non-product files in the delta
 
@@ -336,19 +364,22 @@ per-thread Full/Compact state any more. User doc: `docs/user/providers-claude.md
 
 ## Absorbed or obsolete (do not re-add)
 
-| Former fork feature                                                                                              | Upstream now                                                                                                                                                                                                                         |
-| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Usage-limit **data** path (`providerUsage.ts`, `ProviderUsageMonitor`, registry overlay, `ServerProvider.usage`) | `ServerProvider.usageLimits`, `ProviderUsageLimitsIngestion`, Limits tab (#9507). Only the UI in §1 is fork code.                                                                                                                    |
-| Thread message search (FTS5 migration, `searchThreads` RPC, palette)                                             | Upstream `searchThreads`, in-thread find (`mod+f`). No fork code remains; the live DB's migration ledger matches upstream.                                                                                                           |
-| Claude `model_refusal_fallback` handling and its work-log notice                                                 | `ClaudeAdapterV2` emits a `system_notice` itself. The V1 `ProviderRuntimeIngestion` mapping was deleted with V1.                                                                                                                     |
-| Hard-coded Claude catalog (Opus 5 / xhigh)                                                                       | Remote model manifest (#9084).                                                                                                                                                                                                       |
-| Claude logged-out detection (`unauthenticated` status)                                                           | Upstream's `apiProvider` model; a logged-out Claude reports `ready`. See follow-ups.                                                                                                                                                 |
-| `ProviderStatusBanner` preferring the server message                                                             | Upstream does the same.                                                                                                                                                                                                              |
-| Assistant item id namespacing (`AcpSessionRuntime` export + test, "empty Cursor replies after `session/load`")   | `packages/provider-acp` namespaces ids per runtime and blocks `session/load` replay; the V2 ACP adapter scopes ids by turn; Cursor now runs on the Cursor SDK.                                                                       |
-| Warm thread cache healing (`isReusableThreadDetailCache`)                                                        | V2 client cache is schema-versioned (`ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION`) and drops undecodable entries; bounded windows persist with their cursor, so "no user message" is a valid state. Fix corruption by a version bump. |
-| Changed-files tree auto-expand (≤12 files)                                                                       | Upstream's `ChangedFilesCard` remembers its own expanded state and starts collapsed.                                                                                                                                                 |
-| Context-ring padding (`pr-28/pr-20/pr-12`)                                                                       | Upstream measures the composer's resting actions width.                                                                                                                                                                              |
-| MCP tool catalogs per session capability (fa65fe8b78)                                                            | Per-request caller isolation is upstream's. Hiding tools by capability is back as §15's `/mcp` filter (one server, filtered per caller), not one server per capability set.                                                          |
+| Former fork feature                                                                                                | Upstream now                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Usage-limit **data** path (`providerUsage.ts`, `ProviderUsageMonitor`, registry overlay, `ServerProvider.usage`)   | `ServerProvider.usageLimits`, `ProviderUsageLimitsIngestion`, Limits tab (#9507). Only the UI in §1 is fork code.                                                                                                                    |
+| Thread message search (FTS5 migration, `searchThreads` RPC, palette)                                               | Upstream `searchThreads`, in-thread find (`mod+f`). No fork code remains; the live DB's migration ledger matches upstream.                                                                                                           |
+| Claude `model_refusal_fallback` handling and its work-log notice                                                   | `ClaudeAdapterV2` emits a `system_notice` itself. The V1 `ProviderRuntimeIngestion` mapping was deleted with V1.                                                                                                                     |
+| Hard-coded Claude catalog (Opus 5 / xhigh)                                                                         | Remote model manifest (#9084).                                                                                                                                                                                                       |
+| Claude logged-out detection (`unauthenticated` status)                                                             | Upstream's `apiProvider` model; a logged-out Claude reports `ready`. See follow-ups.                                                                                                                                                 |
+| `ProviderStatusBanner` preferring the server message                                                               | Upstream does the same.                                                                                                                                                                                                              |
+| Assistant item id namespacing (`AcpSessionRuntime` export + test, "empty Cursor replies after `session/load`")     | `packages/provider-acp` namespaces ids per runtime and blocks `session/load` replay; the V2 ACP adapter scopes ids by turn; Cursor now runs on the Cursor SDK.                                                                       |
+| Warm thread cache healing (`isReusableThreadDetailCache`)                                                          | V2 client cache is schema-versioned (`ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION`) and drops undecodable entries; bounded windows persist with their cursor, so "no user message" is a valid state. Fix corruption by a version bump. |
+| Changed-files tree auto-expand (≤12 files)                                                                         | Upstream's `ChangedFilesCard` remembers its own expanded state and starts collapsed.                                                                                                                                                 |
+| Context-ring padding (`pr-28/pr-20/pr-12`)                                                                         | Upstream measures the composer's resting actions width.                                                                                                                                                                              |
+| Claude probe in a neutral directory (`os.tmpdir()`)                                                                | Upstream probes from the server `stateDir` (233e70b3b2), also neutral and fast.                                                                                                                                                      |
+| Legacy sidebar patches (subagent filter, active-row reveal, `useRevealActiveThreadRow`, `Sidebar.reveal.test.tsx`) | `LegacySidebar.tsx` deleted (#21039); boring sidebar filters subagents (`filterSidebarV2VisibleThreads`) and reveals via `sidebar/routeReveal.ts` (#23519, #25234).                                                                  |
+| Fork FTS5 palette hooks (clear scope, reveal row)                                                                  | Upstream indexed Cmd+K search (#24343) and route reveal widens a hiding project scope. Only "expand the folder" remains (§8).                                                                                                        |
+| MCP tool catalogs per session capability (fa65fe8b78)                                                              | Per-request caller isolation is upstream's. Hiding tools by capability is back as §15's `/mcp` filter (one server, filtered per caller), not one server per capability set.                                                          |
 
 ---
 
@@ -377,28 +408,30 @@ cd apps/web && vp test run \
   src/components/chat/ContextWindowMeter.logic.test.ts \
   src/components/chat/MessagesTimeline.logic.test.ts \
   src/components/chat/composerFileDrop.test.ts \
-  src/components/Sidebar.reveal.test.tsx \
-  src/hooks/useChatProviderRefresh.test.tsx \
-  src/lib/openWorkspaceIntent.test.ts \
+  src/components/ChatView.logic.test.ts \
+  src/components/Sidebar.logic.test.ts \
+  src/lib/openWorkspaceIntent.test.ts src/lib/runtime.test.ts \
   src/lib/syntaxHighlighting.engine.test.ts --project unit
+cd apps/web && vp test run src/hooks/useChatProviderRefresh.browser.test.tsx  # needs Playwright chromium
 cd apps/web && vp run typecheck
 
 # server
 cd apps/server && vp test run \
-  src/provider/ProviderInstanceRegistry.test.ts \
   src/terminal/NodePtyAdapter.test.ts src/terminal/Manager.test.ts \
   src/cli/desktopLaunch.test.ts src/cli/app.test.ts \
+  src/telemetry/AnalyticsService.test.ts src/provider/AgentContextBudget.test.ts \
   src/orchestration-v2/Adapters/CodexAdapterV2.test.ts \
   src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts \
   src/orchestration-v2/Adapters/OpenCode2AdapterV2.test.ts \
   src/orchestration-v2/OpenCode2OrchestratorV2.integration.test.ts \
-  src/orchestration-v2/testkit/OrchestratorReplayFixtures.integration.test.ts \
   src/orchestration-v2/ProviderSessionManager.test.ts src/mcp/McpHttpServer.test.ts
+cd apps/server && vp test run src/orchestration-v2/testkit  # *ReplayFixtures.integration (one per provider)
 cd packages/provider-core && vp test run src/server
 
 # shared / desktop / mobile / scripts
-cd packages/shared && vp test run src/desktopOpenArgs.test.ts
-cd apps/desktop && vp test run src/app/DesktopEnvironment.test.ts src/app/DesktopUserData.test.ts
+cd packages/shared && vp test run src/desktopOpenArgs.test.ts src/otelEnvironment.test.ts
+cd apps/desktop && vp test run src/app/DesktopEnvironment.test.ts src/app/DesktopUserData.test.ts \
+  src/ipc/methods/window.test.ts
 cd apps/mobile && vp test run --config ../../vite.config.ts --dir . src/features/threads/use-chat-provider-refresh.test.tsx
 vp test run scripts/sign-macos-local.test.ts
 
@@ -410,9 +443,6 @@ t3 start --no-browser         # explicit server still works
 
 ## Follow-ups (not done)
 
-- **Fail-fast capability caching.** `ClaudeDriver.ts` uses upstream's `Cache.make` with a flat
-  TTL, so a failed probe is cached for the full window and any probe regression presents as a
-  sticky error.
 - **Logged-out Claude.** Upstream reports a logged-out Claude as `ready`; re-adding an
   `unauthenticated` status needs a rule that does not mislabel Bedrock.
 - Claude reroute: process `retracted_message_uuids` (§10).
@@ -421,13 +451,19 @@ t3 start --no-browser         # explicit server still works
   refresh and probes every provider, also when a draft turns into a thread on first send. An
   untargeted refresh without `refreshModels` still refreshes auth and usage; consider that plus a
   per-environment throttle.
-- **Sidebar reveal observer (§8)** lives for the whole route when the row never appears (thread
-  filtered out by project scope, empty draft, collapsed sidebar); cap it at ~2s.
+- **MCP group filter (§15)** parses `/mcp` POST bodies and does not filter SSE-framed
+  `tools/list`; porting it to `McpSchema.EnabledWhen` needs upstream's handler-error tests adjusted.
+- **PR-watch wake text** (`pullRequestWatch.ts`, `PullRequestWatchReactor.ts`) names
+  `watch_pull_request` even when PR tools were switched off after a watch started.
+- **Mobile tracing** (`apps/mobile/src/features/observability/tracing.ts`) is not gated by §19.
 - **Pending-file poll (§5)** reads the state dir every 750ms for the app's lifetime; an
   `fs.watch` or a poll bounded to `activate`/`second-instance` would do.
 - `t3 open` writes the pending file under the shell's `$T3CODE_HOME`; an app started by Launch
   Services does not see that variable, so the hand-off silently does nothing when it is set.
 - Turn-fold preview (§6) shows mentions as raw `[name](/abs/path)` markdown.
 - The unauthenticated send gate (§3) checks only the primary model selection.
+- Upstream tests that fail only on a macOS dev box (not fork code): `scripts/build-npm-launcher.test.ts`
+  (`/var` vs `/private/var`) and desktop `DesktopLinuxUrlHandler.test.ts` theme icons
+  (case-insensitive filesystem).
 - Rebuild `t3 open` on upstream's `t3 app` activation, and ship it in a real release, so `t3 .`
   works without building from this checkout.

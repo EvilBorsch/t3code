@@ -1,5 +1,9 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
+  findProjectByPath,
+  inferProjectTitleFromPath,
+} from "@t3tools/client-runtime/state/projects";
+import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
   settlePromise,
@@ -14,7 +18,6 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { resolveDefaultProviderModelSelection } from "../providerInstances";
-import { findProjectByPath, inferProjectTitleFromPath } from "./projectPaths";
 import { newProjectId } from "./utils";
 
 export type OpenWorkspaceProject = {

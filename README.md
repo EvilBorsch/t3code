@@ -18,14 +18,14 @@ What the fork still carries on top of upstream:
 
 - **Always-visible usage limits** — rings next to the composer send button for the selected provider (session, weekly, model-scoped weekly), each hover showing spent and remaining percent with the reset time; the same numbers appear on every provider row and as a section in the provider editor. The context window ring next to them is always on; upstream's "legacy" opt-in toggle is gone. Web and desktop only.
 - **`t3 .` / `t3 open`** — open a directory in the installed desktop app as a new draft thread, with a pending-intent file so warm starts on macOS work too.
-- **Sidebar follows search results** — selecting a project expands its thread list; selecting a thread scrolls to its row, including rows loaded after navigation and repeated selections.
+- **Search expands the project** — opening a project from Cmd+K expands its sidebar folder.
 - **Providers refresh when opening a chat** — new and existing chats refresh provider availability and models once per visit, so recovered providers become selectable without a trip to Settings.
 - **OS file drops as mentions** — a file dropped from the desktop onto the composer becomes an absolute-path `@` mention when the app can resolve its path; images and everything else become attachments.
-- **Claude probe from a neutral directory** — the capability probe never runs in the server's working directory, which on desktop is `$HOME` and takes close to a minute to scan.
 - **Turn-fold prompt previews** — each collapsed turn shows the prompt that started it and jumps back to it.
 - **Codex model reroutes in the work log** — when Codex switches models mid-turn, the turn says so.
-- **Agent tool groups** — choose what T3 adds to agents (visual replies, thread tools, pull request tools, browser, devices) in Settings → Integrations; by default only visual replies, so agents otherwise see the same prompt and tools as in their own CLI. Agent browser access is **off** by default.
+- **Agent tool groups** — choose what T3 adds to agents (visual replies, thread tools, pull request tools, browser, devices) in Settings → Browser; by default only visual replies, so agents otherwise see the same prompt and tools as in their own CLI. Agent browser access is **off** by default.
 - **Compact chip only on click** — on a stale Claude thread Enter sends with full history; clicking the Compact chip summarizes first, then sends.
+- **Telemetry off by default** — product usage events and relay tracing stay off unless `T3CODE_TELEMETRY_ENABLED=true` is set (see [docs/user/telemetry.md](./docs/user/telemetry.md)).
 - **OpenCode full access reaches outside the project** — both OpenCode adapters send an explicit `external_directory` allow, so a full-access OpenCode agent and its subagents are no longer confined to the workspace directory.
 
 [**`diff_with_master.md`**](./diff_with_master.md) is the full handoff document for everything that differs from upstream — themes, rationale, pitfalls, and the open follow-ups left by the last upstream merge.
@@ -114,6 +114,7 @@ We are (mostly) not accepting contributions yet. Small fixes may be considered. 
 
 Full docs live in [docs/](./docs). There's no docs site yet.
 
+- [FAQ](./docs/user/faq.md)
 - [Install and first run](./docs/user/install.md)
 - [Permission modes](./docs/user/permission-modes.md)
 - [Keyboard shortcuts](./docs/user/keybindings.md)

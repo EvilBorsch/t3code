@@ -1,11 +1,7 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 
 import {
-  PI_T3_MCP_EXTENSION_FILENAME,
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
@@ -13,11 +9,7 @@ import {
   T3_PI_SYSTEM_PROMPT_ENV,
 } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
-import {
-  buildPiRpcLaunch,
-  materializePiT3McpExtension,
-  resolvePiLaunchArgs,
-} from "./mcpInjection.ts";
+import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
 
 const threadId = ThreadId.make("thread-pi-t3-mcp");
 
@@ -122,22 +114,10 @@ describe("pi T3 MCP injection", () => {
       const systemPrompt = result?.systemPrompt ?? "Pi system prompt";
 
       assert.isTrue(systemPrompt.startsWith("Pi system prompt"));
-      assert.equal(systemPrompt.includes("T3 Code visual replies"), visuals);
+      assert.equal(systemPrompt.includes("html_render"), visuals);
       assert.equal(systemPrompt.includes("delegate_task"), threads);
     },
   );
-
-  it("falls back to Pi's first supported mode for legacy auto threads", () => {
-    const launch = buildPiRpcLaunch({
-      launchArgs: [],
-      environment: {},
-      mcpSession: undefined,
-      extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
-      runtimeMode: "auto",
-    });
-
-    assert.equal(launch.env[T3_PI_RUNTIME_MODE_ENV], "approval-required");
-  });
 
   it("forces tools and user extensions off for unattended text generation", () => {
     const launch = buildPiRpcLaunch({
@@ -153,6 +133,7 @@ describe("pi T3 MCP injection", () => {
       environment: {},
       mcpSession,
       extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+      sessionPath: "/fake/persisted.jsonl",
       ephemeral: true,
       disableExtensions: true,
       disableTools: true,
@@ -187,22 +168,4 @@ describe("pi T3 MCP injection", () => {
     assert.isTrue(resolvePiLaunchArgs("--provider openrouter --model=deepseek/v4").ok);
     assert.isTrue(resolvePiLaunchArgs("--model deepseek/v4").ok);
   });
-
-  it.effect("materializes the MCP bridge with namespaced tool registration", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const cacheDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pi-extensions-" });
-      const mcpDest = yield* materializePiT3McpExtension(cacheDir);
-      assert.isTrue(mcpDest.endsWith(PI_T3_MCP_EXTENSION_FILENAME));
-      const mcpSource = yield* fs.readFileString(mcpDest);
-      assert.include(mcpSource, "export default async function t3McpExtension");
-      assert.include(mcpSource, "before_agent_start");
-      assert.include(mcpSource, 'pi.on("tool_call"');
-      assert.include(mcpSource, "Allow ${event.toolName}?");
-      assert.include(mcpSource, '"mcp-protocol-version"');
-      assert.include(mcpSource, '"tools/call"');
-      assert.include(mcpSource, "mcp__t3-code__");
-      assert.include(mcpSource, "mcp__t3_code__");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
 });

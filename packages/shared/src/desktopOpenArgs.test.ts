@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalDate:off
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -73,16 +73,18 @@ describe("desktopOpenArgs", () => {
 
   it("ignores stale pending open-workspace files", () => {
     const stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-open-stale-"));
+    const writtenAt = Date.parse("2026-10-01T00:00:00.000Z");
+    vi.setSystemTime(writtenAt);
     try {
       writePendingDesktopOpenWorkspace({
         stateDir,
         workspaceRoot: "/tmp/stale",
         newThread: true,
       });
-      const staleNow = Date.now() + 121_000;
-      expect(readPendingDesktopOpenWorkspace(stateDir, staleNow)).toBeNull();
+      expect(readPendingDesktopOpenWorkspace(stateDir, writtenAt + 121_000)).toBeNull();
       expect(NodeFS.existsSync(NodePath.join(stateDir, "pending-open-workspace.json"))).toBe(false);
     } finally {
+      vi.useRealTimers();
       NodeFS.rmSync(stateDir, { recursive: true, force: true });
     }
   });

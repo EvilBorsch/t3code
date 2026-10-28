@@ -1,12 +1,8 @@
 #!/usr/bin/env node
 /**
- * Local desktop launcher used by `t3 .` / `t3 open` during development.
- * Spawns the rebuilt Electron main from this repo so --open-workspace works
- * without waiting for a Nightly release.
- *
- * Uses a distinct CFBundleIdentifier so an already-running installed
- * Nightly/Alpha does not steal the single-instance lock: DesktopEnvironment
- * derives the userData dir from that id, so the two never share a lock path.
+ * Запускает пересобранный Electron из этого репозитория для `t3 .` / `t3 open` (только для отладки).
+ * Отдельный CFBundleIdentifier: DesktopEnvironment выводит из него свой userData, поэтому
+ * установленный Nightly/Beta не забирает single-instance lock.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -24,7 +20,7 @@ const mainEntry = NodePath.join(desktopDir, "dist-electron", "main.cjs");
 const passthroughArgs = process.argv.slice(2);
 const launch = resolveElectronLaunchCommand([mainEntry, ...passthroughArgs]);
 
-// electron-launcher returns .../T3 Code (Alpha).app/Contents/MacOS/Electron
+// electron-launcher returns .../T3 Code (Beta).app/Contents/MacOS/Electron
 const appBundlePath = NodePath.resolve(launch.electronPath, "..", "..", "..");
 const infoPlistPath = NodePath.join(appBundlePath, "Contents", "Info.plist");
 if (NodeFS.existsSync(infoPlistPath)) {
