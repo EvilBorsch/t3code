@@ -1,4 +1,4 @@
-# Diff vs `origin/main` (branch `fix-claude-usage-master`)
+# Diff vs `origin/main` (fork branch `main`)
 
 > Handoff document for **everything** on this branch that differs from `origin/main`
 > (upstream `pingdotgg/t3code`; the default branch is `main`, there is no `master`).
@@ -8,9 +8,10 @@
 > This file describes the **current** delta only. Features upstream has since absorbed, or that
 > its rewrites made obsolete, are listed once under _Absorbed or obsolete_ so nobody re-adds them.
 
-**Sync status 2026-10-29:** merged `origin/main` at `37fbefd147` (desktop `0.1.5`) on branch
-`fix-claude-usage-master-merge-1028`; the pre-merge fork stays on `fix-claude-usage-master`. The
-2026-10-28 merge brought upstream's deletion of `LegacySidebar.tsx` (the `legacySidebarEnabled`
+**Sync status 2026-10-29:** merged `origin/main` at `37fbefd147` (desktop `0.1.5`). Since then the
+fork lives on `main` of `EvilBorsch/t3code` (local `main` tracks `fork/main`); the older branches
+`fix-claude-usage-master` and `fix-claude-usage-master-merge-1028` are frozen. Never use GitHub's
+"Sync fork" button: it would discard the fork's commits. The 2026-10-28 merge brought upstream's deletion of `LegacySidebar.tsx` (the `legacySidebarEnabled`
 setting now opens the "boring sidebar" mode of `Sidebar.tsx`), a rewritten composer and design,
 pnpm 12 / vite-plus 1.4 (update the global `vp` with `vp upgrade`), and state migrations 062–072 —
 063 drops the V1 projections, so a pre-merge build cannot reopen the migrated `statev2.sqlite`.
@@ -22,8 +23,8 @@ git rev-list --left-right --count origin/main...HEAD
 git diff --stat origin/main...HEAD
 ```
 
-**Upstream merge routine:** fetch `fork` and `origin`, move onto `fork/fix-claude-usage-master`
-if it is ahead, `git merge origin/main`, resolve, then rebuild and reinstall the desktop app (see
+**Upstream merge routine:** on `main`, fetch `fork` and `origin`, fast-forward to `fork/main` if it
+is ahead, `git merge origin/main`, resolve, push `main` to `fork`, then rebuild and reinstall the desktop app (see
 _Building and installing_). Treat every section below as fork-owned when resolving conflicts:
 never take upstream's side of those files wholesale. Upstream's lint now rejects off-scale
 Tailwind values and restyled `components/ui` exports (`shadcn/no-arbitrary-values`,
