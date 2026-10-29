@@ -735,7 +735,6 @@ describe("CursorAdapterV2", () => {
           providerInstanceId: instanceId,
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer synthetic-cursor-token",
-          browserToolsAvailable: true,
           capabilities: new Set(device ? ["orchestration", "device"] : ["orchestration"]),
         });
       const modelSelection = { instanceId, model: "composer-2.5" };
