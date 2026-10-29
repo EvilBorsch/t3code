@@ -162,7 +162,7 @@ scrolls to the prompt, and collapsing a fold scrolls back to its prompt (decided
 `TurnFoldTimelineRow` from `row.expanded`), since a long turn leaves the viewport on the final
 reply. `chat/MessagesTimeline.tsx`, `MessagesTimeline.logic.ts` (+ test).
 
-## 8. Opening a project expands its sidebar folder
+## 8. Sidebar search opens Cmd+K; a project result starts a new draft
 
 The user runs `legacySidebarEnabled: true`, which upstream now maps to the boring-sidebar mode of
 `Sidebar.tsx` (project folders). Upstream covers what the fork used to patch into the legacy
@@ -170,8 +170,11 @@ sidebar: subagent threads are hidden by `filterSidebarV2VisibleThreads` (`partit
 folders, counts, jump keys, sorting), and the active row is revealed by `sidebar/routeReveal.ts`,
 including inside a collapsed folder. The fork keeps only:
 
-- `CommandPalette.tsx` `openProjectFromSearch` expands the project's folder with
-  `sidebarFolderExpansionKeys(group)`.
+- In boring mode the sidebar's **Search** row is a button that opens Cmd+K (threads, projects,
+  settings), like the legacy sidebar, instead of upstream's inline thread-only filter
+  (`SidebarThreadHeader` `commandPaletteSearch`). The default mode keeps the inline filter.
+- `CommandPalette.tsx` `openProjectFromSearch` opens a **new draft** in the project (upstream
+  opens its latest thread) and expands the project's folder with `sidebarFolderExpansionKeys(group)`.
 - `DesktopOpenWorkspaceListener.tsx` (§5) expands with the same keys, built from
   `buildSidebarProjectSnapshots({ groupScratchProjects: true })`, so a stored `false` on a
   repository or scratch folder cannot win.

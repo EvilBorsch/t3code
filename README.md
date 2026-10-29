@@ -18,7 +18,7 @@ What the fork still carries on top of upstream:
 
 - **Always-visible usage limits** — rings next to the composer send button for the selected provider (session, weekly, model-scoped weekly), each hover showing spent and remaining percent with the reset time; the same numbers appear on every provider row and as a section in the provider editor. The context window ring next to them is always on; upstream's "legacy" opt-in toggle is gone. Web and desktop only.
 - **`t3 .` / `t3 open`** — open a directory in the installed desktop app as a new draft thread, with a pending-intent file so warm starts on macOS work too.
-- **Search expands the project** — opening a project from Cmd+K expands its sidebar folder.
+- **Search jumps to a project** — the sidebar Search opens Cmd+K (as in the old sidebar); picking a project there starts a new thread in it and expands its folder.
 - **Providers refresh when opening a chat** — new and existing chats refresh provider availability and models once per visit, so recovered providers become selectable without a trip to Settings.
 - **OS file drops as mentions** — a file dropped from the desktop onto the composer becomes an absolute-path `@` mention when the app can resolve its path; images and everything else become attachments.
 - **Turn-fold prompt previews** — each collapsed turn shows the prompt that started it and jumps back to it.

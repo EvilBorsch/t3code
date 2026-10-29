@@ -142,7 +142,7 @@ import {
   useCommandPaletteStore,
 } from "../commandPaletteStore";
 import { PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
-import { getLatestThreadForProject, sortThreads } from "@t3tools/client-runtime/state/thread-sort";
+import { getLatestThreadForProject } from "@t3tools/client-runtime/state/thread-sort";
 import {
   cn,
   getLocalFileManagerName,
@@ -719,40 +719,11 @@ function OpenCommandPaletteDialog(props: {
     [browseNavigation],
   );
 
+  // Проект из поиска открывает новое сообщение в нём и раскрывает его папку в сайдбаре.
   const openProjectFromSearch = async (project: (typeof projects)[number]) => {
     const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-    // Выбранный проект раскрывается в сайдбаре, чтобы были видны все его треды.
     if (group)
       useUiStateStore.getState().setProjectExpanded(sidebarFolderExpansionKeys(group), true);
-    const groupedProjectKeys = group
-      ? new Set(
-          group.memberProjectRefs.map(
-            (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-          ),
-        )
-      : null;
-    const latestThread = groupedProjectKeys
-      ? (sortThreads(
-          threads.filter(
-            (thread) =>
-              thread.archivedAt === null &&
-              groupedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
-          ),
-          clientSettings.sidebarThreadSortOrder,
-        )[0] ?? null)
-      : getLatestThreadForProject(
-          threads.filter((thread) => thread.environmentId === project.environmentId),
-          project.id,
-          clientSettings.sidebarThreadSortOrder,
-        );
-    if (latestThread) {
-      await navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(latestThread.environmentId, latestThread.id)),
-      });
-      return;
-    }
-
     await handleNewThread(scopeProjectRef(project.environmentId, project.id));
   };
 

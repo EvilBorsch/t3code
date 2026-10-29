@@ -3056,6 +3056,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               searchResultCount={threadSearchResults.length}
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
+              commandPaletteSearch={
+                boringSidebarEnabled
+                  ? {
+                      shortcutLabel:
+                        shortcutLabelForCommand(keybindings, "commandPalette.toggle") ?? null,
+                      onOpen: () => openCommandPalette(),
+                    }
+                  : undefined
+              }
             />
           </SidebarGroup>
         }
