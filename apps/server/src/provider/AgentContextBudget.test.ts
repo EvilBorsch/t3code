@@ -97,7 +97,8 @@ const claudeSystemAppend = () => {
     resume: false,
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
-    t3Tools: ALL_T3_AGENT_TOOLS,
+    // Как в upstream: Claude меряется без доступа к устройствам, Codex — с ним.
+    t3Tools: { ...ALL_T3_AGENT_TOOLS, device: false },
   });
   return typeof systemPrompt === "object" && "append" in systemPrompt ? systemPrompt.append : "";
 };
@@ -132,7 +133,10 @@ it.effect("agent context matches the committed budget", () =>
       ),
     };
 
-    expect(measured).toEqual(budget);
+    expect(
+      measured,
+      "Set agentContextBudget.json to the measured values. Before you cut text to fit, run the evals that cover it (evals/README.md).",
+    ).toEqual(budget);
   }).pipe(
     Effect.provide(
       McpHttpServer.layerTools.pipe(

@@ -24,7 +24,7 @@ const KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   other: 3,
 };
 
-export function usageTone(usedPercent: number): UsageTone {
+function usageTone(usedPercent: number): UsageTone {
   if (usedPercent > 90) return "critical";
   if (usedPercent >= 75) return "warning";
   return "ok";

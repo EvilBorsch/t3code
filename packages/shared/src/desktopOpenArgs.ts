@@ -5,11 +5,11 @@ import * as NodePath from "node:path";
 
 import { parseCliArgs } from "./cliArgs.ts";
 
-export const OPEN_WORKSPACE_FLAG = "open-workspace";
-export const NEW_THREAD_FLAG = "new-thread";
-export const PENDING_OPEN_WORKSPACE_FILENAME = "pending-open-workspace.json";
+const OPEN_WORKSPACE_FLAG = "open-workspace";
+const NEW_THREAD_FLAG = "new-thread";
+const PENDING_OPEN_WORKSPACE_FILENAME = "pending-open-workspace.json";
 /** Ignore leftover pending intents older than this (CLI↔desktop race window). */
-export const PENDING_OPEN_WORKSPACE_MAX_AGE_MS = 120_000;
+const PENDING_OPEN_WORKSPACE_MAX_AGE_MS = 120_000;
 
 export type DesktopOpenWorkspaceSource = "argv" | "second-instance" | "pending-file";
 
@@ -25,7 +25,7 @@ export interface PendingDesktopOpenWorkspace {
   readonly writtenAt: string;
 }
 
-export function pendingOpenWorkspacePath(stateDir: string): string {
+function pendingOpenWorkspacePath(stateDir: string): string {
   return NodePath.join(stateDir, PENDING_OPEN_WORKSPACE_FILENAME);
 }
 

@@ -285,11 +285,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getPendingOpenWorkspace: () => ipcRenderer.invoke(IpcChannels.GET_PENDING_OPEN_WORKSPACE_CHANNEL),
   ackOpenWorkspace: () => ipcRenderer.invoke(IpcChannels.ACK_OPEN_WORKSPACE_CHANNEL),
   getUpdateState: () => ipcRenderer.invoke(IpcChannels.UPDATE_GET_STATE_CHANNEL),
-  setUpdateChannel: (channel) =>
-    ipcRenderer.invoke(IpcChannels.UPDATE_SET_CHANNEL_CHANNEL, channel),
+  setUpdateChannel: (channel, minimumVersion) =>
+    ipcRenderer.invoke(IpcChannels.UPDATE_SET_CHANNEL_CHANNEL, { channel, minimumVersion }),
   checkForUpdate: () => ipcRenderer.invoke(IpcChannels.UPDATE_CHECK_CHANNEL),
   downloadUpdate: () => ipcRenderer.invoke(IpcChannels.UPDATE_DOWNLOAD_CHANNEL),
-  installUpdate: () => ipcRenderer.invoke(IpcChannels.UPDATE_INSTALL_CHANNEL),
+  installUpdate: (expectedVersion) =>
+    ipcRenderer.invoke(IpcChannels.UPDATE_INSTALL_CHANNEL, expectedVersion),
   cliCommand: {
     getState: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_GET_STATE_CHANNEL),
     install: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_INSTALL_CHANNEL),

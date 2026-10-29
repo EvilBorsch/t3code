@@ -98,7 +98,7 @@ const normalizeOpenWorkspaceIntent = Effect.fn("desktop.openIntent.normalize")(f
   } satisfies DesktopOpenWorkspaceIntent;
 });
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const pendingRef = yield* Ref.make<Option.Option<DesktopOpenWorkspaceIntent>>(Option.none());
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
 

@@ -8,12 +8,13 @@
 > This file describes the **current** delta only. Features upstream has since absorbed, or that
 > its rewrites made obsolete, are listed once under _Absorbed or obsolete_ so nobody re-adds them.
 
-**Sync status 2026-10-28:** merged `origin/main` at `eb751fa073` (desktop `0.1.3`) on branch
-`fix-claude-usage-master-merge-1028`; the pre-merge fork stays on `fix-claude-usage-master`. This
-merge brought upstream's deletion of `LegacySidebar.tsx` (the `legacySidebarEnabled` setting now
-opens the "boring sidebar" mode of `Sidebar.tsx`), a rewritten composer and design, pnpm 12 /
-vite-plus 1.4 (update the global `vp` with `vp upgrade`), and state migrations 062–072 — 063 drops
-the V1 projections, so a pre-merge build cannot reopen the migrated `statev2.sqlite`. Re-check with:
+**Sync status 2026-10-29:** merged `origin/main` at `37fbefd147` (desktop `0.1.5`) on branch
+`fix-claude-usage-master-merge-1028`; the pre-merge fork stays on `fix-claude-usage-master`. The
+2026-10-28 merge brought upstream's deletion of `LegacySidebar.tsx` (the `legacySidebarEnabled`
+setting now opens the "boring sidebar" mode of `Sidebar.tsx`), a rewritten composer and design,
+pnpm 12 / vite-plus 1.4 (update the global `vp` with `vp upgrade`), and state migrations 062–072 —
+063 drops the V1 projections, so a pre-merge build cannot reopen the migrated `statev2.sqlite`.
+Re-check with:
 
 ```bash
 git fetch origin main
@@ -58,6 +59,11 @@ and remaining quota visible while working.
 - Codex can report only a weekly window on some plans (`primary` = 7d, `secondary` null);
   a single `7d` ring is data, not a bug.
 - Mobile keeps upstream's on-demand panel only.
+- Upstream's closest feature is the **Usage** item of the thread details card (#26859, #26904; off
+  by default, right-click the card or **Settings → Appearance → Thread details**). It is not a
+  replacement: the card is inline only in a wide chat with the card pinned, and otherwise a popover
+  that closes when the composer takes focus. The user chose to keep the rings (2026-10-29); the
+  Usage item stays available as an extra.
 
 ## 2. Context window ring always on
 
@@ -162,10 +168,12 @@ scrolls to the prompt, and collapsing a fold scrolls back to its prompt (decided
 `TurnFoldTimelineRow` from `row.expanded`), since a long turn leaves the viewport on the final
 reply. `chat/MessagesTimeline.tsx`, `MessagesTimeline.logic.ts` (+ test).
 
-## 8. Sidebar search opens Cmd+K; a project result starts a new draft
+## 8. Boring sidebar on by default; its search opens Cmd+K; a project result starts a new draft
 
-The user runs `legacySidebarEnabled: true`, which upstream now maps to the boring-sidebar mode of
-`Sidebar.tsx` (project folders). Upstream covers what the fork used to patch into the legacy
+`boringSidebarEnabled` defaults to `true` in `packages/contracts/src/settings.ts` (upstream: `false`),
+so the project-folder sidebar is what a fresh client shows; **Settings → Labs → Boring sidebar**
+turns it off (user doc: `docs/user/thread-sidebar.md`). The user also runs `legacySidebarEnabled:
+true`, which upstream maps to the same mode. Upstream covers what the fork used to patch into the legacy
 sidebar: subagent threads are hidden by `filterSidebarV2VisibleThreads` (`partitionSidebarThreads`,
 folders, counts, jump keys, sorting), and the active row is revealed by `sidebar/routeReveal.ts`,
 including inside a collapsed folder. The fork keeps only:
@@ -270,6 +278,11 @@ upstream's.
   missing from the table: add every new upstream toolkit there. Upstream's `McpSchema.EnabledWhen`
   (used for `hiddenFromSubagents` / `hiddenWhileLinksOff`) would be the native mechanism, but
   switching to it breaks upstream tests that expect the handler-level "capability missing" error.
+- Device text (upstream #25661) follows the `device` group: `t3OrchestrationSystemPrompt(tools)`
+  appends `T3_CODE_DEVICE_TOOL_INSTRUCTIONS` (OpenCode, Pi, ACP), `t3OrchestrationPrompt` re-sends it
+  to Cursor conversations that lack it, Codex puts it in `t3_code_tools`, and Claude gets the
+  ToolSearch variant plus upstream's `SubagentStart` hook. `AgentContextBudget.test.ts` measures
+  Claude without device access, like upstream, so `agentContextBudget.json` stays upstream's.
 - `packages/provider-core/src/server/mcpSession.ts` — `T3AgentTools` / `t3AgentTools(session)`;
   `orchestrationInstructions.ts` builds on upstream's short sections: the orchestration sections
   (incl. request_secret, environment and thread links) need thread tools, and in upstream's

@@ -1,6 +1,7 @@
 import * as NodeAssert from "node:assert/strict";
 
 import { t3AgentTools } from "@t3tools/provider-core/server/mcpSession";
+import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { describe, it } from "vite-plus/test";
 
 import {
@@ -102,7 +103,8 @@ describe("T3 context entries per agent tool group", () => {
     NodeAssert.match(orchestration, /html_render/);
     NodeAssert.doesNotMatch(orchestration, /delegate_task/);
     NodeAssert.doesNotMatch(orchestration, /preview_/);
-    NodeAssert.match(context.t3_code_tools!.value, /device_list/);
+    NodeAssert.ok(context.t3_code_tools!.value.includes(T3_CODE_DEVICE_TOOL_INSTRUCTIONS));
+    NodeAssert.doesNotMatch(context.t3_code_tools!.value, /ToolSearch/);
     NodeAssert.doesNotMatch(context.t3_code_tools!.value, /preview_status/);
   });
 

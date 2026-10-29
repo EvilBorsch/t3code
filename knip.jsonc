@@ -33,6 +33,8 @@
         "setup-worktree.ts",
         "sign-macos.ts",
         "smoke-desktop-app.ts",
+        // Форк: t3-local.sh запускает его по пути при T3CODE_USE_LOCAL_DESKTOP=1.
+        "t3-code-desktop-local.mjs",
         "verify-windows-desktop-artifact.ts",
       ],
       "ignoreDependencies": ["agent-device", "esbuild"],
