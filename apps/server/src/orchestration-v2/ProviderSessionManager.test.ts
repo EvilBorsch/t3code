@@ -1882,17 +1882,26 @@ it.effect(
     }),
 );
 
-it.effect("ProviderSessionManagerV2 gives agents only visual replies by default", () =>
-  Effect.gen(function* () {
-    const { opens } = yield* runAgentAccessScenario({});
-    assert.deepEqual(opens[0]?.capabilities, new Set(["html"]));
-  }),
+it.effect(
+  "ProviderSessionManagerV2 gives agents visual replies, thread tools and browser by default",
+  () =>
+    Effect.gen(function* () {
+      const { opens } = yield* runAgentAccessScenario({});
+      assert.deepEqual(
+        opens[0]?.capabilities,
+        new Set(["html", "orchestration", "worktree", "preview"]),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 attaches no MCP server with every tool group off", () =>
   Effect.gen(function* () {
     const { opens, adapterConfigs } = yield* runAgentAccessScenario({
-      settings: { enableAgentVisualReplies: false },
+      settings: {
+        enableAgentVisualReplies: false,
+        enableAgentThreadTools: false,
+        enableAgentBrowserAccess: false,
+      },
     });
     assert.deepEqual(adapterConfigs, [undefined]);
     assert.isUndefined(opens[0]?.config);
@@ -1919,6 +1928,7 @@ it.effect("ProviderSessionManagerV2 grants every enabled tool group", () =>
 it.effect("ProviderSessionManagerV2 honors a project thread-tools opt-in", () =>
   Effect.gen(function* () {
     const { opens } = yield* runAgentAccessScenario({
+      settings: { enableAgentThreadTools: false, enableAgentBrowserAccess: false },
       projectOverrides: { enableAgentThreadTools: true },
     });
     assert.deepEqual(opens[0]?.capabilities, new Set(["html", "orchestration", "worktree"]));
@@ -1931,8 +1941,14 @@ it.effect("ProviderSessionManagerV2 rotates the credential when a tool group is 
       reopenWith: { enableAgentPullRequestTools: true },
     });
     const [before, after] = opens;
-    assert.deepEqual(before?.capabilities, new Set(["html"]));
-    assert.deepEqual(after?.capabilities, new Set(["html", "pull-requests"]));
+    assert.deepEqual(
+      before?.capabilities,
+      new Set(["html", "orchestration", "worktree", "preview"]),
+    );
+    assert.deepEqual(
+      after?.capabilities,
+      new Set(["html", "orchestration", "worktree", "preview", "pull-requests"]),
+    );
     assert.notEqual(after?.config?.providerSessionId, before?.config?.providerSessionId);
     assert.deepEqual(liveCredentialIds, [after?.config?.providerSessionId]);
   }),
@@ -1943,7 +1959,11 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const { opens, liveCredentialIds } = yield* runAgentAccessScenario({
-        reopenWith: { enableAgentVisualReplies: false },
+        reopenWith: {
+          enableAgentVisualReplies: false,
+          enableAgentThreadTools: false,
+          enableAgentBrowserAccess: false,
+        },
       });
       assert.isDefined(opens[0]?.config);
       assert.isUndefined(opens[1]?.config);

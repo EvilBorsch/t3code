@@ -221,10 +221,12 @@ create it on the JS engine and stall the chat. Upstream's call sites now pass
 `shiki-js` for a caller that omits it. Test: `syntaxHighlighting.engine.test.ts` (asserts the
 highlighter name).
 
-## 12. Agent browser access off by default
+## 12. Agent tool group defaults
 
-`packages/contracts/src/settings.ts` — `enableAgentBrowserAccess` defaults to `false`. With §15's
-`/mcp` filter, agents without browser access no longer see `preview_*` tools at all.
+`packages/contracts/src/settings.ts` — since 2026-10-30 visual replies, thread tools and browser
+access default to on, pull request tools and devices to off (user's choice). With §15's `/mcp`
+filter, an agent without a group never sees its tools. Claude Code and Codex defer MCP tool
+schemas behind tool search, so an enabled group costs only its prompt text up front.
 
 ## 13. Local macOS build signing
 
@@ -255,13 +257,13 @@ T3 to reach Claude Code / Codex like their own CLI, opting into T3 extras one gr
 **What.** Five server settings, project-scoped, under **Settings → Browser → Agent access**
 (upstream removed the Integrations page; `/settings/integrations` redirects there):
 
-| Setting                               | MCP capability              | Prompt text                                                | Default   |
-| ------------------------------------- | --------------------------- | ---------------------------------------------------------- | --------- |
-| `enableAgentVisualReplies` (fork)     | `html` (fork)               | visuals section                                            | on        |
-| `enableAgentThreadTools` (fork)       | `orchestration`, `worktree` | orchestration instructions, handoff `t3_thread_read` hints | off       |
-| `enableAgentPullRequestTools` (fork)  | `pull-requests`             | `<pull_request_linking>`                                   | off       |
-| `enableAgentBrowserAccess` (upstream) | `preview`                   | browser block                                              | off (§12) |
-| `enableAgentDeviceAccess` (upstream)  | `device`                    | device block                                               | off       |
+| Setting                               | MCP capability              | Prompt text                                                | Default  |
+| ------------------------------------- | --------------------------- | ---------------------------------------------------------- | -------- |
+| `enableAgentVisualReplies` (fork)     | `html` (fork)               | visuals section                                            | on       |
+| `enableAgentThreadTools` (fork)       | `orchestration`, `worktree` | orchestration instructions, handoff `t3_thread_read` hints | on       |
+| `enableAgentPullRequestTools` (fork)  | `pull-requests`             | `<pull_request_linking>`                                   | off      |
+| `enableAgentBrowserAccess` (upstream) | `preview`                   | browser block                                              | on (§12) |
+| `enableAgentDeviceAccess` (upstream)  | `device`                    | device block                                               | off      |
 
 `runtime_info` is always sent (Codex now gets it even without MCP). With every group off no
 credential is issued and the `t3-code` server is not attached. With every group on, behavior is

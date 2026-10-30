@@ -181,7 +181,7 @@ Choose which T3 Code tools agents get in **Settings → Browser**:
 - **Agent browser access** lets agents use the shared browser.
 - **Agent device access**, under **Devices**, lets agents drive simulators and emulators.
 
-Only visual replies are on by default. Select a project to override any of them for that project.
+Visual replies, thread tools and browser access are on by default. Select a project to override any of them for that project.
 Changes apply when an agent session next starts. With everything off, agents get the same
 instructions and tools they have in their own CLI, plus a short note that they are running in
 T3 Code.

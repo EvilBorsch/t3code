@@ -23,7 +23,7 @@ What the fork still carries on top of upstream:
 - **OS file drops as mentions** — a file dropped from the desktop onto the composer becomes an absolute-path `@` mention when the app can resolve its path; images and everything else become attachments.
 - **Turn-fold prompt previews** — each collapsed turn shows the prompt that started it and jumps back to it.
 - **Codex model reroutes in the work log** — when Codex switches models mid-turn, the turn says so.
-- **Agent tool groups** — choose what T3 adds to agents (visual replies, thread tools, pull request tools, browser, devices) in Settings → Browser; by default only visual replies, so agents otherwise see the same prompt and tools as in their own CLI. Agent browser access is **off** by default.
+- **Agent tool groups** — choose what T3 adds to agents (visual replies, thread tools, pull request tools, browser, devices) in Settings → Browser; visual replies, thread tools and browser access are on by default, pull request tools and devices off.
 - **Compact chip only on click** — on a stale Claude thread Enter sends with full history; clicking the Compact chip summarizes first, then sends.
 - **Telemetry off by default** — product usage events and relay tracing stay off unless `T3CODE_TELEMETRY_ENABLED=true` is set (see [docs/user/telemetry.md](./docs/user/telemetry.md)).
 - **OpenCode full access reaches outside the project** — both OpenCode adapters send an explicit `external_directory` allow, so a full-access OpenCode agent and its subagents are no longer confined to the workspace directory.
