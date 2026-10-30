@@ -8,7 +8,7 @@
 > This file describes the **current** delta only. Features upstream has since absorbed, or that
 > its rewrites made obsolete, are listed once under _Absorbed or obsolete_ so nobody re-adds them.
 
-**Sync status 2026-10-29:** merged `origin/main` at `37fbefd147` (desktop `0.1.5`). Since then the
+**Sync status 2026-10-30:** merged `origin/main` at `6575ce3250` (desktop `0.1.5`, migration 073). Since 2026-10-29 the
 fork lives on `main` of `EvilBorsch/t3code` (local `main` tracks `fork/main`); the older branches
 `fix-claude-usage-master` and `fix-claude-usage-master-merge-1028` are frozen. Never use GitHub's
 "Sync fork" button: it would discard the fork's commits. The 2026-10-28 merge brought upstream's deletion of `LegacySidebar.tsx` (the `legacySidebarEnabled`
