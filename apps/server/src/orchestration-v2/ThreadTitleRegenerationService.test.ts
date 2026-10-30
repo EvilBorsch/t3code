@@ -9,15 +9,19 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -28,6 +32,8 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import { UNTITLED_THREAD_TITLE } from "@t3tools/provider-core/server/threadTitleContext";
 
 const projectId = ProjectId.make("project:title-regeneration");
 const modelSelection = {
@@ -46,6 +52,7 @@ const adapter = {
 function makeHarness(
   options: {
     readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
+    readonly providers?: ReadonlyArray<ServerProvider>;
   } = {},
 ) {
   const layerDatabase = SqlitePersistence.layerMemory;
@@ -93,6 +100,20 @@ function makeHarness(
         layerProjectedProjects,
         Layer.mock(TextGeneration.TextGeneration)({ generateThreadTitle }),
         layerServerSettings,
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+          getInstance: (instanceId) => {
+            const snapshot = (options.providers ?? [codexProvider(true)]).find(
+              (provider) => provider.instanceId === instanceId,
+            );
+            return Effect.succeed(
+              snapshot === undefined
+                ? undefined
+                : ({
+                    snapshot: { getSnapshot: Effect.succeed(snapshot) },
+                  } as unknown as ProviderInstance),
+            );
+          },
+        }),
       ),
     ),
   );
@@ -242,6 +263,43 @@ function recordRun(input: {
   });
 }
 
+function codexProvider(supportsTextGeneration: boolean): ServerProvider {
+  return {
+    instanceId: modelSelection.instanceId,
+    driver: ProviderDriverKind.make("codex"),
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: { status: "authenticated" },
+    version: null,
+    checkedAt: "2026-06-20T00:00:00.000Z",
+    supportsTextGeneration,
+    models: [
+      {
+        slug: modelSelection.model,
+        name: "GPT-5.1 Codex",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "reasoningEffort",
+              label: "Reasoning",
+              type: "select",
+              options: [
+                { id: "low", label: "Low" },
+                { id: "medium", label: "Medium", isDefault: true },
+                { id: "high", label: "High" },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+    slashCommands: [],
+    skills: [],
+  };
+}
+
 function armRegeneration(input: { readonly command: string; readonly threadId: ThreadId }) {
   return Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
@@ -371,6 +429,92 @@ describe("ThreadTitleRegenerationService", () => {
         assert.equal(projection.thread.title, "Fresh title");
         assert.isNotOk(projection.thread.titleRegeneration);
       }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("titles a thread with its own model at the lowest reasoning effort", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness();
+      yield* Effect.gen(function* () {
+        const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:model:create",
+          thread: "thread:title:model",
+        });
+        yield* dispatchUserMessage({
+          command: "command:title:model:message",
+          threadId,
+          text: "Investigate the flaky login test",
+        });
+        const requestId = yield* armRegeneration({ command: "command:title:model:1", threadId });
+
+        yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
+
+        assert.deepEqual(harness.generateThreadTitle.mock.calls[0]?.[0]?.modelSelection, {
+          ...modelSelection,
+          options: [{ id: "reasoningEffort", value: "low" }],
+        });
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("leaves the thread untitled when its model cannot title it", () =>
+    Effect.gen(function* () {
+      const cases = [
+        {
+          name: "provider without text generation",
+          options: { providers: [codexProvider(false)] },
+        },
+        {
+          name: "generation fails after retries",
+          options: { generateTitle: () => Effect.die(new Error("model unavailable")) },
+        },
+      ];
+      for (const testCase of cases) {
+        const harness = makeHarness(testCase.options);
+        yield* Effect.gen(function* () {
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+          const threadId = yield* createThread({
+            command: "command:title:untitled:create",
+            thread: "thread:title:untitled",
+          });
+          yield* dispatchUserMessage({
+            command: "command:title:untitled:message",
+            threadId,
+            text: "Investigate the flaky login test",
+          });
+          const requestId = yield* armRegeneration({
+            command: "command:title:untitled:1",
+            threadId,
+          });
+
+          const execution = yield* titleRegeneration
+            .execute({
+              threadId,
+              requestId,
+              kind: {
+                type: "initial",
+                messageId: MessageId.make("command:title:untitled:message:message"),
+              },
+            })
+            .pipe(Effect.forkChild);
+          yield* TestClock.adjust("1 minute");
+          yield* Fiber.join(execution);
+
+          const projection = yield* threads.getThreadProjection(threadId);
+          assert.equal(projection.thread.title, UNTITLED_THREAD_TITLE, testCase.name);
+          assert.isNotOk(projection.thread.titleRegeneration, testCase.name);
+
+          yield* dispatchUserMessage({
+            command: "command:title:untitled:retry",
+            threadId,
+            text: "Also check the signup test",
+          });
+          const retried = yield* threads.getThreadProjection(threadId);
+          assert.isOk(retried.thread.titleRegeneration, testCase.name);
+        }).pipe(Effect.provide(harness.layer));
+      }
     }),
   );
 

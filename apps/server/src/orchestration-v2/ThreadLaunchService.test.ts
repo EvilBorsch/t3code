@@ -15,7 +15,6 @@ import {
   ComposerContextId,
   type ChatAttachment,
   CommandId,
-  DEFAULT_SERVER_SETTINGS,
   GitCommandError,
   MessageId,
   ProjectId,
@@ -47,6 +46,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
@@ -65,6 +65,7 @@ import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 
 const projectId = ProjectId.make("project:launch-test");
 const otherProjectId = ProjectId.make("project:launch-other");
@@ -216,6 +217,15 @@ function makeHarness(options: HarnessOptions = {}) {
     }),
     layerServerSettings,
     ProviderRegistryMock.layer(options.providers),
+    // Любой провайдер треда умеет писать заголовки.
+    Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+      getInstance: (instanceId) =>
+        Effect.succeed({
+          snapshot: {
+            getSnapshot: Effect.succeed({ instanceId, enabled: true, models: [] }),
+          },
+        } as unknown as ProviderInstance),
+    }),
     options.managedFolders ??
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
@@ -740,10 +750,10 @@ it.effect("arms durable title generation after accepting the first message", () 
       });
       const generated = yield* threads.getThreadProjection(launched.threadId);
       assert.equal(generated.thread.title, "Generated title");
-      assert.deepEqual(
-        harness.generateThreadTitle.mock.calls[0]?.[0]?.modelSelection,
-        DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
-      );
+      assert.deepEqual(harness.generateThreadTitle.mock.calls[0]?.[0]?.modelSelection, {
+        instanceId: generated.thread.modelSelection.instanceId,
+        model: generated.thread.modelSelection.model,
+      });
 
       const manualRequestId = CommandId.make("command:title-generation:manual");
       yield* threads.dispatch({

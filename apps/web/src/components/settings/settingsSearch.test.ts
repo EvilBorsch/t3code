@@ -331,7 +331,7 @@ describe("source control host search items", () => {
 
 describe("movedSettingsPath", () => {
   it("sends old links to the page their row moved to", () => {
-    expect(movedSettingsPath("/settings/general", "text-generation-model")).toBe(
+    expect(movedSettingsPath("/settings/general", "thread-title-instructions")).toBe(
       "/settings/threads",
     );
     expect(movedSettingsPath("/settings/connections", "authorized-clients")).toBe(

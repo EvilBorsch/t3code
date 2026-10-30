@@ -1,8 +1,11 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  isProviderAvailable,
+  isProviderTextGenerationCapable,
   type ChatAttachment,
   type MessageId,
+  type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
   type RunId,
@@ -16,13 +19,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type { OrchestratorV2Error } from "./Orchestrator.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
-import { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
+import {
+  formatThreadTitleContext,
+  UNTITLED_THREAD_TITLE,
+} from "@t3tools/provider-core/server/threadTitleContext";
 export { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
 
 export class ThreadTitleRegenerationService extends Context.Service<
@@ -49,6 +56,37 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
+  const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+
+  // Заголовок пишет модель треда с минимальным effort (провайдеры перечисляют effort по
+  // возрастанию); null — провайдер треда не умеет генерировать текст.
+  const threadModelForTitle = Effect.fn("ThreadTitleRegenerationService.threadModelForTitle")(
+    function* (selection: ModelSelection) {
+      const instance = yield* providerInstances.getInstance(selection.instanceId);
+      const provider = instance === undefined ? undefined : yield* instance.snapshot.getSnapshot;
+      if (
+        provider === undefined ||
+        !provider.enabled ||
+        !isProviderAvailable(provider) ||
+        !isProviderTextGenerationCapable(provider)
+      ) {
+        return null;
+      }
+      const effort = provider.models
+        .find((model) => model.slug === selection.model)
+        ?.capabilities?.optionDescriptors?.find(
+          (descriptor) =>
+            descriptor.type === "select" &&
+            (descriptor.id === "effort" || descriptor.id === "reasoningEffort"),
+        );
+      const lowest = effort?.type === "select" ? effort.options[0]?.id : undefined;
+      return {
+        instanceId: selection.instanceId,
+        model: selection.model,
+        ...(effort && lowest ? { options: [{ id: effort.id, value: lowest }] } : {}),
+      };
+    },
+  );
 
   const complete = (input: {
     readonly threadId: ThreadId;
@@ -107,6 +145,11 @@ const make = Effect.gen(function* () {
   const execute: ThreadTitleRegenerationService["Service"]["execute"] = Effect.fn(
     "ThreadTitleRegenerationService.execute",
   )(function* (input) {
+    // Ручная перегенерация при неудаче оставляет прежний заголовок.
+    const failed =
+      input.kind.type === "initial"
+        ? { type: "complete" as const, title: UNTITLED_THREAD_TITLE }
+        : { type: "complete" as const };
     const outcome:
       | { readonly type: "stale" }
       | { readonly type: "complete"; readonly title?: string } = yield* Effect.gen(function* () {
@@ -152,6 +195,8 @@ const make = Effect.gen(function* () {
       const inherited = yield* forkSource(projection.thread).pipe(
         Effect.orElseSucceed(() => undefined),
       );
+      const modelSelection = yield* threadModelForTitle(projection.thread.modelSelection);
+      if (modelSelection === null) return failed;
       const settings = resolveProjectSettings(
         yield* serverSettings.getSettings,
         projection.thread.projectId,
@@ -163,7 +208,7 @@ const make = Effect.gen(function* () {
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
         ...(inherited === undefined ? {} : { forkSource: inherited }),
         instructions: settings.threadTitleInstructions,
-        modelSelection: settings.textGenerationModelSelection,
+        modelSelection,
       });
       const generatedTitle = result.title.trim();
       return generatedTitle === "New thread" ||
@@ -182,7 +227,7 @@ const make = Effect.gen(function* () {
               threadId: input.threadId,
               requestId: input.requestId,
               cause,
-            }).pipe(Effect.as({ type: "complete" as const })),
+            }).pipe(Effect.as(failed)),
       ),
     );
 

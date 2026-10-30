@@ -7,6 +7,9 @@ export type ThreadTitleMessage = {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
 };
 
+/** Форк: заголовок треда, который модель треда не смогла озаглавить; следующее сообщение пробует снова. */
+export const UNTITLED_THREAD_TITLE = "Untitled";
+
 const MAX_CONTEXT = 8_000;
 const MAX_MESSAGE = 2_000;
 const OMITTED = "[Earlier content truncated]\n\n";

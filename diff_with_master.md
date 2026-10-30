@@ -371,6 +371,21 @@ only when the desktop bridge says `true`). Tests: `AnalyticsService.test.ts`,
 `otelEnvironment.test.ts`, desktop `ipc/methods/window.test.ts`, web `lib/runtime.test.ts`. User
 doc: `docs/user/telemetry.md`. Not covered: mobile store builds (own Settings toggle).
 
+## 20. Thread titles come from the thread's own model
+
+Upstream titles every thread with the **Text generation model** setting. The fork titles it with
+the thread's own model at its lowest reasoning effort (first `effort` / `reasoningEffort` choice
+the provider lists), with no fallback model. If the thread's provider cannot generate text, or
+generation fails after its retries, a first-message title becomes `UNTITLED_THREAD_TITLE`
+("Untitled", `provider-core/server/threadTitleContext.ts`), and `Orchestrator.ts` arms title
+generation again on the next user message while the thread still has that title. A failed manual
+**Regenerate title** keeps the old title. The Text generation model row and its search entry are
+gone from Settings → Threads; the stored `textGenerationModelSelection` still drives commit
+messages, branch names and PR text unless Writing & review sets its own model.
+`ThreadTitleRegenerationService.ts` (+ test "titles a thread with its own model at the lowest
+reasoning effort", "leaves the thread untitled when its model cannot title it"). User doc:
+`docs/user/thread-sidebar.md`.
+
 ## Non-product files in the delta
 
 - `README.md` — fork section.

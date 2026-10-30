@@ -659,13 +659,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
-    id: "text-generation-model",
-    title: "Text generation model",
-    to: "/settings/threads",
-    scope: "project-defaults",
-    searchTerms: ["generated thread titles source control content default provider"],
-  },
-  {
     id: "thread-title-instructions",
     title: "Thread title instructions",
     to: "/settings/threads",

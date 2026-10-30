@@ -115,6 +115,10 @@ If dragging is unavailable for one environment, update the T3 Code server runnin
 environment. Pinned and active reordering require server support. Threads from older servers keep
 their default order until the server is updated.
 
+A new thread is titled by its own model at its lowest reasoning effort, a few seconds after the
+first message. If that model cannot write a title (its provider has no text generation, or the
+request fails), the thread is called **Untitled** and your next message tries again.
+
 To generate a fresh title from the conversation, open a thread's menu and choose
 **Regenerate title**. The action is unavailable while title generation is in progress
 or when the connected environment needs a server update.

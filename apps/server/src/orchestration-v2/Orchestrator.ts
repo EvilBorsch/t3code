@@ -90,6 +90,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { UNTITLED_THREAD_TITLE } from "@t3tools/provider-core/server/threadTitleContext";
 import * as ProjectStore from "./ProjectStore.ts";
 import {
   isCheckpointRestoreIsolated,
@@ -5215,7 +5216,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (yield* projectionStore
           .getMessageCount(command.threadId)
           .pipe(mapDispatchError(command))) === 0) ||
-        (command.createdBy === "user" && onlyMaintenanceHistory))
+        (command.createdBy === "user" &&
+          (onlyMaintenanceHistory ||
+            (projection.thread.title === UNTITLED_THREAD_TITLE &&
+              projection.thread.titleRegeneration == null))))
     ) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
