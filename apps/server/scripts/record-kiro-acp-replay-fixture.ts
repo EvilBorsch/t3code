@@ -4,6 +4,7 @@
  * with `kiro-cli login`, with `kiro-cli` on PATH (or T3_KIRO_BIN):
  *   node scripts/record-kiro-acp-replay-fixture.ts --scenario simple
  */
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ProviderReplayEntry } from "@t3tools/contracts";
 import { KiroSettings } from "@t3tools/provider-kiro/settings";
@@ -488,8 +489,11 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
   ).pipe(
     Layer.provide(
       Layer.mergeAll(
-        TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+        TestProviderHost.layer().pipe(
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
         NodeServices.layer,
+        NodeCrypto.layer,
         IdAllocator.layer,
       ),
     ),
@@ -606,5 +610,5 @@ if (scenarios.length > 1 && readArgValues("--out").length > 0) {
 await Effect.runPromise(
   Effect.forEach(scenarios, (name) => Effect.scoped(recordScenario(name)), {
     discard: true,
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
