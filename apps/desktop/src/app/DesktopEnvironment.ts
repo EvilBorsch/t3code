@@ -78,7 +78,6 @@ export class DesktopEnvironment extends Context.Service<
     // Electron profile, so it never shares the installed app's single-instance lock.
     readonly customUserDataDirName: Option.Option<string>;
     readonly linuxDesktopEntryName: string;
-    readonly linuxWmClass: string;
     readonly linuxApplicationsDir: string;
     readonly desktopLauncherPath: Option.Option<string>;
     readonly appImagePath: Option.Option<string>;
@@ -242,7 +241,6 @@ const make = Effect.fn("desktop.environment.make")(function* (
         ? Option.none()
         : Option.some(appUserModelId.replaceAll(".", "-")),
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
     linuxApplicationsDir,
     desktopLauncherPath: config.desktopLauncherPath,
     appImagePath: config.appImagePath,
