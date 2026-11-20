@@ -8,7 +8,10 @@
 > This file describes the **current** delta only. Features upstream has since absorbed, or that
 > its rewrites made obsolete, are listed once under _Absorbed or obsolete_ so nobody re-adds them.
 
-**Sync status 2026-11-03:** merged `origin/main` at `71646e031a` (desktop `0.1.6`, migrations 074–077). Since 2026-10-29 the
+**Sync status 2026-11-20:** merged `origin/main` at `6edb53026b` (desktop `0.1.11`, migrations 078–102,
+Node `26.13.1` per `engines`). Upstream now ships UI i18n (General Translation): fork UI strings go
+through `gt()` / `<T>` / `m(msg())` with keys in every locale catalog (`apps/web/src/i18n/translations`,
+mobile likewise), enforced by `t3code(no-untranslated-copy)` and `vp run i18n:check`. Since 2026-10-29 the
 fork lives on `main` of `EvilBorsch/t3code` (local `main` tracks `fork/main`); the older branches
 `fix-claude-usage-master` and `fix-claude-usage-master-merge-1028` are frozen. Never use GitHub's
 "Sync fork" button: it would discard the fork's commits. The 2026-10-28 merge brought upstream's deletion of `LegacySidebar.tsx` (the `legacySidebarEnabled`
@@ -25,7 +28,8 @@ git diff --stat origin/main...HEAD
 
 **Upstream merge routine:** on `main`, fetch `fork` and `origin`, fast-forward to `fork/main` if it
 is ahead, `git merge origin/main`, resolve, push `main` to `fork`, then rebuild and reinstall the desktop app (see
-_Building and installing_). Treat every section below as fork-owned when resolving conflicts:
+_Building and installing_). On the Windows checkout the remotes are named `origin` (fork) and `upstream`
+(pingdotgg), so there it is `git merge upstream/main` and `git push origin main`. Treat every section below as fork-owned when resolving conflicts:
 never take upstream's side of those files wholesale. Upstream's lint now rejects off-scale
 Tailwind values and restyled `components/ui` exports (`shadcn/no-arbitrary-values`,
 `shadcn/no-restyle`, `shadcn/no-raw-colors`); run `vp lint` on the fork files after every merge.
@@ -68,15 +72,14 @@ and remaining quota visible while working.
 
 ## 2. Context window ring always on
 
-Upstream makes `ContextWindowMeter` opt-in behind `contextWindowMeterEnabled` (default `false`,
-"Context window indicator (legacy)"). The fork renders it whenever the thread reports a
-context window:
-
-- `ChatComposer.tsx` — no gate on the setting; `shouldReserveContextWindowMeter` has no
-  `meterEnabled` input (`ContextWindowMeter.logic.ts` + test).
-- `settings/SettingsPanels.tsx`, `settings/settingsSearch.ts` — the toggle row, its search
-  entry and its legacy-target id are removed. The contract field stays so stored client
-  settings keep decoding.
+Upstream deleted the composer's context ring, its `contextWindowMeterEnabled` setting and
+`ContextWindowMeter.logic.ts` (#33131, 521ac7c218); context usage lives only in the thread details
+card's "Context window" item, off by default. The fork keeps the ring: `chat/ContextWindowMeter.tsx`
+(restored from upstream's last version, trimmed to the ring plus its hover popover; no "Compact
+context" button, no loading placeholder) renders in the composer footer whenever the thread reports a
+context window. `ChatComposer.tsx` derives the snapshot and passes it to `ComposerFooterControls.tsx`
+(`activeContextWindow`); the compaction helpers it uses are upstream's `compaction.logic.ts`. There
+is no setting left to bypass.
 
 ## 3. Send refuses a logged-out provider
 
@@ -94,9 +97,7 @@ Upstream only blocks sends for Antigravity and excludes such providers from load
   so the rewrite may never fire; it is a no-op unless the path contains `app.asar`.
 - The "make the helper executable" once-guard is keyed by helper path, not one process-wide
   flag, so adapters with different resolvers each chmod their own helper.
-- `apps/server/src/terminal/Manager.ts` — an `error` event is never treated as a duplicate
-  attach snapshot and dropped.
-- Tests in `NodePtyAdapter.test.ts` (runs the fake node-pty), `Manager.test.ts`.
+- Tests in `NodePtyAdapter.test.ts` (runs the fake node-pty).
 
 ## 5. `t3 .` / `t3 open` → desktop workspace with a new draft thread
 
@@ -187,8 +188,9 @@ including inside a collapsed folder. The fork keeps only:
 - `DesktopOpenWorkspaceListener.tsx` (§5) expands with the same keys, built from
   `buildSidebarProjectSnapshots({ groupScratchProjects: true })`, so a stored `false` on a
   repository or scratch folder cannot win.
-- Test: "keeps subagent threads out of boring folders and drops a folder holding only subagents"
-  in `Sidebar.logic.test.ts`.
+- Tests: "keeps subagent threads out of boring folders and drops a folder holding only subagents"
+  in `Sidebar.logic.test.ts`; "starts a new draft in a searched project and expands its folder, not
+  its latest thread" in `CommandPalette.browser.test.tsx` (replaces upstream's latest-thread test).
 
 Known gap: picking the thread that is already open does not re-scroll (the route does not change).
 
@@ -257,13 +259,17 @@ T3 to reach Claude Code / Codex like their own CLI, opting into T3 extras one gr
 **What.** Five server settings, project-scoped, under **Settings → Browser → Agent access**
 (upstream removed the Integrations page; `/settings/integrations` redirects there):
 
-| Setting                               | MCP capability              | Prompt text                                                | Default  |
-| ------------------------------------- | --------------------------- | ---------------------------------------------------------- | -------- |
-| `enableAgentVisualReplies` (fork)     | `html` (fork)               | visuals section                                            | on       |
-| `enableAgentThreadTools` (fork)       | `orchestration`, `worktree` | orchestration instructions, handoff `t3_thread_read` hints | on       |
-| `enableAgentPullRequestTools` (fork)  | `pull-requests`             | `<pull_request_linking>`                                   | off      |
-| `enableAgentBrowserAccess` (upstream) | `preview`                   | browser block                                              | on (§12) |
-| `enableAgentDeviceAccess` (upstream)  | `device`                    | device block                                               | off      |
+| Setting                               | MCP capability                                         | Prompt text                                                                      | Default  |
+| ------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------- | -------- |
+| `enableAgentVisualReplies` (fork)     | `html` (fork; incl. `send_to_user`)                    | visuals section, Claude's `send_to_user` text                                    | on       |
+| `enableAgentThreadTools` (fork)       | `orchestration`, `worktree`, `background-wait`¹        | orchestration instructions, handoff `t3_thread_read` hints, `t3_background_wait` | on       |
+| `enableAgentPullRequestTools` (fork)  | `pull-requests`, `issues`                              | `<pull_request_linking>` (incl. upstream's `link_issue` sentence)                | off      |
+| `enableAgentBrowserAccess` (upstream) | `preview`                                              | browser block                                                                    | on (§12) |
+| `enableAgentDeviceAccess` (upstream)  | `device` (also needs upstream's `enableDeviceSupport`) | device block                                                                     | off      |
+
+¹ only when the provider supports background waits (upstream's rule). The theme tools
+(`t3_theme_read` / `t3_theme_set`) ride on `orchestration`. `tool_search` is always listed but its
+results are filtered to what the caller may see.
 
 `runtime_info` is always sent (Codex now gets it even without MCP). With every group off no
 credential is issued and the `t3-code` server is not attached. With every group on, behavior is
@@ -279,8 +285,9 @@ upstream's.
   middleware filters `tools/list` responses and answers `tools/call` for a hidden tool with a
   JSON-RPC "not found" error without running it. A coverage test fails when a registered tool is
   missing from the table: add every new upstream toolkit there. Upstream's `McpSchema.EnabledWhen`
-  (used for `hiddenFromSubagents` / `hiddenWhileLinksOff`) would be the native mechanism, but
-  switching to it breaks upstream tests that expect the handler-level "capability missing" error.
+  (used for `hiddenFromSubagents` / `hiddenWhileLinksOff`) and the newer `McpServer.visibility`
+  (its deferred listing) would be the native mechanism; switching breaks upstream tests that expect
+  the handler-level "capability missing" error. The filter runs after upstream's auth middleware.
 - Device text (upstream #25661) follows the `device` group: `t3OrchestrationSystemPrompt(tools)`
   appends `T3_CODE_DEVICE_TOOL_INSTRUCTIONS` (OpenCode, Pi, ACP), `t3OrchestrationPrompt` re-sends it
   to Cursor conversations that lack it, Codex puts it in `t3_code_tools`, and Claude gets the
@@ -296,7 +303,8 @@ upstream's.
   a `hasT3Mcp` boolean: `ClaudeAdapterV2` (upstream's `t3_background_wait` text only with thread
   tools), `CodexAdapterV2` via `buildCodexAdditionalContext` (upstream dropped
   `developer_instructions`), `provider-acp`, `provider-cursor`, `provider-opencode` (v1, v2),
-  `provider-muse`, `provider-pi` (`T3_PI_SYSTEM_PROMPT`). Antigravity carries the PR block in its
+  `provider-muse`, `provider-pi` (`T3_PI_SYSTEM_PROMPT`, built in `mcpInjection.ts` with the PR block
+  only with PR tools; upstream #31727 hard-codes it in the extension). Antigravity carries the PR block in its
   session system prompt (upstream), so `AcpAdapterV2RuntimeInput.t3Tools` gates that append too.
   `evals/mcp-tool-use/run.ts` and
   `AgentContextBudget.test.ts` measure with every group on. Expect small, mechanical merge
@@ -329,26 +337,15 @@ the fix that mode would compact ~3 minutes after a 5m tail write. Tests in
 `ClaudeAdapterV2.test.ts` ("prompt cache TTL" scenarios, "dates the idle compaction deadline an
 hour after a five-minute tail write").
 
-## 17. OpenCode full access reaches outside the workspace again
+## 17. OpenCode V2 full access reaches outside the workspace
 
-Both adapters' full-access rules sent only `*`, which left OpenCode's `external_directory → ask`
-default in force, so full-access sessions prompted for every path outside the project. Both now
-send `*` and then an explicit `external_directory → allow`.
-
-- **V2** (`sessionRules` in `packages/provider-opencode/src/server/v2/adapter.ts`): the
-  default `build`/`plan` agents carry the `ask` rule and `*` did not override it.
-- **V1** (`openCodePermissionRules` in `packages/provider-opencode/src/server/adapter.ts`,
-  OpenCode 1.x): `*` does override the parent session, but subagents are where it leaks.
-  OpenCode's task tool seeds a child session with only the parent's `external_directory` and
-  `deny` rules (`deriveSubagentSessionPermission`), and the child's prompt loop reads the
-  session once at start. The complete policy T3 installs through `session.update` after
-  `emitSubagent` therefore never reaches a running subagent, which kept the `general` agent's
-  `external_directory → ask` for its whole run. The explicit rule is inherited at creation.
-
-Tests: `adapter.test.ts` ("lets a full-access subagent reach outside the project from its
-first step"), `Adapters/OpenCode2AdapterV2.test.ts`, `OpenCode2OrchestratorV2.integration.test.ts`,
-and the recorded fixtures `opencode_subagent`, `opencode_running_child_approval`,
-`opencode2_fork` and `opencode2_switch`.
+V2's full-access rules (`sessionRules` in `packages/provider-opencode/src/server/v2/adapter.ts`)
+sent only `*`, but the default `build`/`plan` agents carry OpenCode's `external_directory → ask`
+rule and `*` did not override it, so full-access sessions prompted for every path outside the
+project. The fork sends `*` and then an explicit `external_directory → allow`. (V1 is upstream's
+now, see _Absorbed_.) Tests: `Adapters/OpenCode2AdapterV2.test.ts`,
+`OpenCode2OrchestratorV2.integration.test.ts`, and the recorded fixtures `opencode2_fork` and
+`opencode2_switch`.
 
 ## 18. Compact chip compacts only on click
 
@@ -362,7 +359,12 @@ pressed state), `ChatComposer.tsx` (`compactAndSend`) routes the click, `useComp
 passes `options.compactFirst`, and `ChatView.logic.ts` `planComposerTurn` compacts only with
 `compactFirst` (test "sends with full history unless the Compact chip asked to compact first").
 There is no keep-full-history state. Upstream's idle-compaction setting still applies: "When you
-return" is this chip, "Never" hides it. User doc: `docs/user/providers-claude.md`.
+return" is this chip, "Never" hides it. The chip reads "Summarize {tokens} tokens of history";
+`compactFirst` survives upstream's delayed sends (dictation finishing, images preparing), and a
+fresh session never compacts first. Browser test: `ChatView.handoffCompaction.browser.test.tsx`
+(Enter after a provider switch sends without `/compact`; a chip click sends `/compact` then the
+draft). User doc: `docs/user/providers-claude.md`. Upstream's **mobile app** (#34263) compacts stale
+Claude threads before sending with no chip; that is upstream's and not covered by this section.
 
 ## 19. Telemetry off by default
 
@@ -370,8 +372,10 @@ Upstream sends product events and relay traces unless `T3CODE_TELEMETRY_ENABLED=
 inverts the default; `T3CODE_TELEMETRY_ENABLED=true` opts in. One default per layer:
 `apps/server/src/telemetry/AnalyticsService.ts` (`withDefault(false)`),
 `packages/shared/src/otelEnvironment.ts` `isRelayTracingEnabled` (server relay client,
-`t3 connect`, desktop `getRelayTelemetryEnabled`), `apps/web/src/cloud/publicConfig.ts` (exports
-only when the desktop bridge says `true`). Tests: `AnalyticsService.test.ts`,
+`t3 connect`, desktop `getRelayTelemetryEnabled`), `apps/web/src/cloud/publicConfig.ts` (upstream's
+`relayTelemetryEnabled()`: a browser without the desktop bridge never exports; the desktop answers
+`null` until the login shell is read only when the process env already opted in, else `false`).
+Tests: `AnalyticsService.test.ts`,
 `otelEnvironment.test.ts`, desktop `ipc/methods/window.test.ts`, web `lib/runtime.test.ts`. User
 doc: `docs/user/telemetry.md`. Not covered: mobile store builds (own Settings toggle).
 
@@ -379,10 +383,12 @@ doc: `docs/user/telemetry.md`. Not covered: mobile store builds (own Settings to
 
 Upstream titles every thread with the **Text generation model** setting. The fork titles it with
 the thread's own model at its lowest reasoning effort (first `effort` / `reasoningEffort` choice
-the provider lists), with no fallback model. If the thread's provider cannot generate text, or
+the provider lists), with no fallback model; a model with upstream's `supportsTextGeneration: false`
+counts as unable. If the thread's provider cannot generate text, or
 generation fails after its retries, a first-message title becomes `UNTITLED_THREAD_TITLE`
 ("Untitled", `provider-core/server/threadTitleContext.ts`), and `Orchestrator.ts` arms title
-generation again on the next user message while the thread still has that title. A failed manual
+generation again on the next user message while the thread still has that title (unless the user
+renamed it to that title themselves, upstream's `titleRenamed`). A failed manual
 **Regenerate title** keeps the old title. The Text generation model row and its search entry are
 gone from Settings → Threads; the stored `textGenerationModelSelection` still drives commit
 messages, branch names and PR text unless Writing & review sets its own model.
@@ -416,6 +422,9 @@ reasoning effort", "leaves the thread untitled when its model cannot title it").
 | Legacy sidebar patches (subagent filter, active-row reveal, `useRevealActiveThreadRow`, `Sidebar.reveal.test.tsx`) | `LegacySidebar.tsx` deleted (#21039); boring sidebar filters subagents (`filterSidebarV2VisibleThreads`) and reveals via `sidebar/routeReveal.ts` (#23519, #25234).                                                                  |
 | Fork FTS5 palette hooks (clear scope, reveal row)                                                                  | Upstream indexed Cmd+K search (#24343) and route reveal widens a hiding project scope. Only "expand the folder" remains (§8).                                                                                                        |
 | MCP tool catalogs per session capability (fa65fe8b78)                                                              | Per-request caller isolation is upstream's. Hiding tools by capability is back as §15's `/mcp` filter (one server, filtered per caller), not one server per capability set.                                                          |
+| Terminal attach never dropping an `error` event as a duplicate (`Manager.ts`)                                      | The startup failure is in the snapshot itself (`TerminalSessionSnapshot.error`, #37088), so every attachment gets it once.                                                                                                           |
+| Context-window toggle row, search entry and legacy-target id removed from settings (§2)                            | Upstream deleted the setting and the ring itself (#33131). Only the restored ring remains (§2).                                                                                                                                      |
+| OpenCode V1 full access `external_directory → allow` (`openCodePermissionRules`, subagents)                        | Upstream sends it itself (#35401, 166cb00897); its "maps runtime modes…" test covers it. Only V2 remains (§17).                                                                                                                      |
 
 ---
 
@@ -441,15 +450,17 @@ untouched `state.sqlite` and misses everything done since.
 # web (LANG=en_US.UTF-8: some upstream sidebar tests assert English weekday names)
 cd apps/web && vp test run \
   src/components/chat/ProviderUsageMeter.logic.test.ts \
-  src/components/chat/ContextWindowMeter.logic.test.ts \
   src/components/chat/MessagesTimeline.logic.test.ts \
   src/components/chat/composerFileDrop.test.ts \
   src/components/ChatView.logic.test.ts \
   src/components/Sidebar.logic.test.ts \
   src/lib/openWorkspaceIntent.test.ts src/lib/runtime.test.ts \
   src/lib/syntaxHighlighting.engine.test.ts --project unit
-cd apps/web && vp test run src/hooks/useChatProviderRefresh.browser.test.tsx  # needs Playwright chromium
+cd apps/web && vp test run src/hooks/useChatProviderRefresh.browser.test.tsx \
+  src/components/CommandPalette.browser.test.tsx \
+  src/components/ChatView.handoffCompaction.browser.test.tsx  # needs Playwright chromium
 cd apps/web && vp run typecheck
+vp run i18n:check && vp lint <fork files>  # i18n:check spawns node_modules/.bin/gt: POSIX only
 
 # server
 cd apps/server && vp test run \
@@ -501,5 +512,11 @@ t3 start --no-browser         # explicit server still works
 - Upstream tests that fail only on a macOS dev box (not fork code): `scripts/build-npm-launcher.test.ts`
   (`/var` vs `/private/var`) and desktop `DesktopLinuxUrlHandler.test.ts` theme icons
   (case-insensitive filesystem).
+- **Windows dev box (2026-11-20 merge).** About 35 tests fail only on Windows: POSIX path
+  assertions (`/` vs `\`, `C:\` drive), symlink `EPERM`, `chmod` execute bits, `cmd.exe` instead of a
+  POSIX shell, `process.getuid` missing (Claude task-output tailing), plus `Orchestrator.control-reads`
+  needing Node 26's `StatementSync#stat`. Upstream CI runs Ubuntu/macOS only. Fork-only tests in that
+  set: `cli/desktopLaunch.test.ts` (2), `terminal/NodePtyAdapter.test.ts` (chmod), desktop
+  `DesktopUserData.test.ts` (custom profile path); making them path-agnostic is open.
 - Rebuild `t3 open` on upstream's `t3 app` activation, and ship it in a real release, so `t3 .`
   works without building from this checkout.

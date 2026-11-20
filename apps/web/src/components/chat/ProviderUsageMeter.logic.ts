@@ -1,5 +1,9 @@
 import type { ServerProviderUsageLimits, ServerProviderUsageWindow } from "@t3tools/contracts";
-import { formatDuration, type LimitPace, paceOf } from "@t3tools/shared/usageLimits";
+import { type LimitPace, paceOf } from "@t3tools/shared/usageLimits";
+import { formatDuration } from "@t3tools/shared/usageLimitsCopy";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export type UsageTone = "ok" | "warning" | "critical";
 
@@ -91,9 +95,20 @@ export function presentUsageWindows(
     });
 }
 
-/** "Resets in 2h 13m"; абсолютное время добавляет компонент, у него есть формат из настроек. */
-export function formatUsageReset(window: UsageWindowPresentation, nowMs: number): string {
-  if (window.isExpired) return "Window has reset · waiting for fresh data";
-  if (window.resetsAtMs === null) return "Reset time unknown";
-  return `Resets in ${formatDuration(window.resetsAtMs - nowMs)}`;
+/**
+ * "Resets in 2h 13m" ("resets in 2h 13m" with `midSentence`); абсолютное время добавляет
+ * компонент, у него есть формат из настроек.
+ */
+export function formatUsageReset(
+  window: UsageWindowPresentation,
+  nowMs: number,
+  resolve: MessageResolver = m,
+  midSentence = false,
+): string {
+  if (window.isExpired) return resolve(msg("Window has reset · waiting for fresh data"));
+  if (window.resetsAtMs === null) return resolve(msg("Reset time unknown"));
+  const duration = formatDuration(window.resetsAtMs - nowMs, resolve);
+  return midSentence
+    ? resolve(msg("resets in {duration}", { duration }))
+    : resolve(msg("Resets in {duration}", { duration }));
 }

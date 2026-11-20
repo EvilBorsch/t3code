@@ -1,10 +1,11 @@
 import type { ServerProvider } from "@t3tools/contracts";
+import { resetCreditChoices } from "@t3tools/shared/usageLimitsCopy";
+import { msg, useGT, useMessages } from "gt-react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
-import { resetCreditsSummary } from "../usage/UsageLimits";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { composerFloatingLayerProps } from "./composerEventScope";
@@ -21,7 +22,11 @@ const TONE_COLOR: Record<UsageTone, string> = {
   critical: "var(--color-error)",
 };
 
-const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
+const PACE_LABEL = {
+  ahead: msg("ahead of pace"),
+  on: msg("on pace"),
+  under: msg("under pace"),
+} as const;
 
 /** Кольцо одного окна: заполнение — потраченная доля, цвет — светофор по порогам 75/90%. */
 export function UsageRing({
@@ -80,19 +85,31 @@ function UsageWindowRow({
   readonly window: UsageWindowPresentation;
   readonly nowMs: number;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const resetsAt =
     window.resetsAtMs === null
       ? null
-      : formatUpcomingTimestamp(new Date(window.resetsAtMs).toISOString(), timestampFormat, nowMs);
+      : formatUpcomingTimestamp(
+          new Date(window.resetsAtMs).toISOString(),
+          timestampFormat,
+          nowMs,
+          undefined,
+          m,
+        );
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between gap-3">
         <span className="font-medium text-xs text-muted-foreground">{window.title}</span>
         <span className="text-2xs tabular-nums">
-          <span style={{ color: TONE_COLOR[window.tone] }}>{window.usedPercent}% used</span>
+          <span style={{ color: TONE_COLOR[window.tone] }}>
+            {gt("{used}% used", { used: window.usedPercent })}
+          </span>
           <span className="mx-1 text-secondary-label">·</span>
-          <span className="font-medium text-foreground">{window.remainingPercent}% left</span>
+          <span className="font-medium text-foreground">
+            {gt("{left}% left", { left: window.remainingPercent })}
+          </span>
         </span>
       </div>
       <div
@@ -101,7 +118,7 @@ function UsageWindowRow({
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={window.usedPercent}
-        aria-label={`${window.title} usage`}
+        aria-label={gt("{window} usage", { window: window.title })}
       >
         <div
           className="h-full rounded-full transition-[width,background-color] duration-500 ease-out motion-reduce:transition-none"
@@ -109,9 +126,9 @@ function UsageWindowRow({
         />
       </div>
       <div className="text-2xs leading-4 text-secondary-label">
-        {formatUsageReset(window, nowMs)}
+        {formatUsageReset(window, nowMs, m)}
         {resetsAt ? ` (${resetsAt})` : ""}
-        {window.pace ? ` · ${PACE_LABEL[window.pace]}` : ""}
+        {window.pace ? ` · ${m(PACE_LABEL[window.pace])}` : ""}
       </div>
     </div>
   );
@@ -123,6 +140,8 @@ function UsageWindowRow({
  * кольцо раскрывает полную картину по всем окнам с процентами и временем сброса.
  */
 export function ProviderUsageMeter({ provider }: { readonly provider: ServerProvider | null }) {
+  const gt = useGT();
+  const m = useMessages();
   const limits = provider?.usageLimits;
   // Общий минутный тик приложения: точнее для "resets in" не нужно.
   const nowMs = Date.parse(`${useNowMinute()}:00.000Z`);
@@ -136,18 +155,25 @@ export function ProviderUsageMeter({ provider }: { readonly provider: ServerProv
     <div className="flex flex-col gap-2.5 p-(--floating-content-inset)">
       <div className="flex items-center justify-between gap-3">
         <span className="font-medium text-xs text-muted-foreground">
-          {providerName} · usage limits
+          {gt("{provider} · usage limits", { provider: providerName })}
         </span>
         {plan ? <span className="text-2xs text-secondary-label">{plan}</span> : null}
       </div>
       {windows.map((window) => (
         <UsageWindowRow key={window.id} window={window} nowMs={nowMs} />
       ))}
-      {credits && credits.availableCount > 0 ? (
-        <div className="text-2xs leading-4 text-secondary-label tabular-nums">
-          {resetCreditsSummary(credits, nowMs)}
-        </div>
-      ) : null}
+      {credits && credits.availableCount > 0
+        ? resetCreditChoices(credits, { instanceId: provider.instanceId }, nowMs, false, m).map(
+            (choice) => (
+              <div
+                key={choice.key}
+                className="text-2xs leading-4 text-secondary-label tabular-nums"
+              >
+                {choice.summary}
+              </div>
+            ),
+          )
+        : null}
     </div>
   );
 
@@ -164,7 +190,13 @@ export function ProviderUsageMeter({ provider }: { readonly provider: ServerProv
                 size="icon-sm"
                 variant="ghost-muted"
                 className="size-7"
-                aria-label={`${providerName} ${window.title}: ${window.usedPercent}% used, ${window.remainingPercent}% left. ${formatUsageReset(window, nowMs)}`}
+                aria-label={gt("{provider} {window}: {used}% used, {left}% left. {reset}", {
+                  provider: providerName,
+                  window: window.title,
+                  used: window.usedPercent,
+                  left: window.remainingPercent,
+                  reset: formatUsageReset(window, nowMs, m),
+                })}
               >
                 <UsageRing window={window} className="size-6" />
               </Button>

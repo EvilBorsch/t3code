@@ -1,4 +1,4 @@
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
 import {
@@ -9,7 +9,18 @@ import {
   T3_PI_SYSTEM_PROMPT_ENV,
 } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
-import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
+import * as NodePath from "effect/Path";
+import * as NodeFS from "effect/FileSystem";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  buildPiRpcLaunch,
+  materializePiT3McpExtension,
+  resolvePiLaunchArgs,
+} from "./mcpInjection.ts";
+import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 
 const threadId = ThreadId.make("thread-pi-t3-mcp");
 
@@ -91,12 +102,18 @@ describe("pi T3 MCP injection", () => {
   });
 
   it.each([
-    { capabilities: ["html"], visuals: true, threads: false },
-    { capabilities: ["orchestration", "worktree"], visuals: false, threads: true },
-    { capabilities: undefined, visuals: false, threads: false },
+    { capabilities: ["html"], visuals: true, threads: false, pullRequests: false },
+    {
+      capabilities: ["orchestration", "worktree"],
+      visuals: false,
+      threads: true,
+      pullRequests: false,
+    },
+    { capabilities: ["pull-requests"], visuals: false, threads: false, pullRequests: true },
+    { capabilities: undefined, visuals: false, threads: false, pullRequests: false },
   ])(
     "appends T3 instructions for the session's tools: $capabilities",
-    async ({ capabilities, visuals, threads }) => {
+    async ({ capabilities, visuals, threads, pullRequests }) => {
       const launch = buildPiRpcLaunch({
         launchArgs: [],
         environment: {},
@@ -116,6 +133,7 @@ describe("pi T3 MCP injection", () => {
       assert.isTrue(systemPrompt.startsWith("Pi system prompt"));
       assert.equal(systemPrompt.includes("html_render"), visuals);
       assert.equal(systemPrompt.includes("delegate_task"), threads);
+      assert.equal(systemPrompt.includes("<pull_request_linking>"), pullRequests);
     },
   );
 
@@ -135,6 +153,7 @@ describe("pi T3 MCP injection", () => {
       extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
       sessionPath: "/fake/persisted.jsonl",
       ephemeral: true,
+      shortLived: true,
       disableExtensions: true,
       disableTools: true,
     });
@@ -144,11 +163,21 @@ describe("pi T3 MCP injection", () => {
       "--no-session",
       "--provider",
       "anthropic",
+      "--offline",
       "--no-extensions",
       "--no-tools",
     ]);
     assert.isUndefined(launch.env[T3_MCP_URL_ENV]);
     assert.isUndefined(launch.env[T3_PI_SYSTEM_PROMPT_ENV]);
+    const alreadyOffline = buildPiRpcLaunch({
+      launchArgs: ["--offline"],
+      environment: {},
+      mcpSession: undefined,
+      extensionPath: undefined,
+      ephemeral: true,
+      shortLived: true,
+    });
+    assert.deepEqual(alreadyOffline.args, ["--mode", "rpc", "--no-session", "--offline"]);
     assert.deepInclude(resolvePiLaunchArgs("--mode text"), {
       ok: false,
       message: "Pi launch argument '--mode' is controlled by T3 Code and cannot be overridden.",
@@ -168,4 +197,54 @@ describe("pi T3 MCP injection", () => {
     assert.isTrue(resolvePiLaunchArgs("--provider openrouter --model=deepseek/v4").ok);
     assert.isTrue(resolvePiLaunchArgs("--model deepseek/v4").ok);
   });
+});
+
+describe("materializePiT3McpExtension", () => {
+  // A pi launch concurrent with the materialize reads the extension file from
+  // disk; a truncate-then-write exposes an empty or partial file mid-write and
+  // the launch loads a broken extension.
+  it.live("never exposes a torn extension file to a concurrent reader", () =>
+    Effect.gen(function* () {
+      const fs = yield* NodeFS.FileSystem;
+      const path = yield* NodePath.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pi-atomic-" });
+      const anomalies: Array<string> = [];
+      const stopAfter = 120;
+      const writer = yield* Effect.forkChild(
+        Effect.gen(function* () {
+          for (let index = 0; index < stopAfter; index += 1) {
+            yield* fs
+              .remove(path.join(directory, "pi-t3-mcp-extension.ts"), { force: true })
+              .pipe(Effect.ignore);
+            yield* Effect.all(
+              [materializePiT3McpExtension(directory), materializePiT3McpExtension(directory)],
+              { concurrency: "unbounded" },
+            );
+          }
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      );
+      const reader = yield* Effect.forkChild(
+        Effect.forever(
+          Effect.gen(function* () {
+            const text = yield* fs
+              .readFileString(path.join(directory, "pi-t3-mcp-extension.ts"))
+              .pipe(Effect.option);
+            if (Option.isNone(text)) return; // Missing between writes: legitimate.
+            // A read that SUCCEEDS must return the full extension: an empty or
+            // partial read means the writer truncated the file mid-write.
+            if (text.value.length === 0) {
+              anomalies.push("empty: truncated mid-write");
+            } else if (text.value.length !== PI_T3_MCP_EXTENSION_SOURCE.length) {
+              anomalies.push(
+                `partial: ${text.value.length} of ${PI_T3_MCP_EXTENSION_SOURCE.length} chars`,
+              );
+            }
+          }),
+        ),
+      );
+      yield* Fiber.join(writer);
+      yield* Fiber.interrupt(reader);
+      expect(anomalies).toEqual([]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

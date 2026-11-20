@@ -17,6 +17,9 @@ import {
   type ScopedProjectRef,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m } from "../i18n/messages";
 import { resolveDefaultProviderModelSelection } from "../providerInstances";
 import { newProjectId } from "./utils";
 
@@ -49,7 +52,7 @@ export async function openWorkspaceInDesktop(input: {
 }): Promise<boolean> {
   const workspaceRoot = input.intent.workspaceRoot.trim();
   if (workspaceRoot.length === 0) {
-    input.onError?.("Failed to open workspace", "Workspace path cannot be empty.");
+    input.onError?.(m(msg("Failed to open workspace")), m(msg("Workspace path cannot be empty.")));
     return false;
   }
 
@@ -79,8 +82,8 @@ export async function openWorkspaceInDesktop(input: {
       if (!isAtomCommandInterrupted(createResult)) {
         const error = squashAtomCommandFailure(createResult);
         input.onError?.(
-          "Failed to open workspace",
-          error instanceof Error ? error.message : "An error occurred.",
+          m(msg("Failed to open workspace")),
+          error instanceof Error ? error.message : m(msg("An error occurred.")),
         );
       }
       return false;
@@ -91,8 +94,8 @@ export async function openWorkspaceInDesktop(input: {
     if (projected._tag === "Failure") {
       const error = squashAtomCommandFailure(projected);
       input.onError?.(
-        "Failed to open workspace",
-        error instanceof Error ? error.message : "An error occurred.",
+        m(msg("Failed to open workspace")),
+        error instanceof Error ? error.message : m(msg("An error occurred.")),
       );
       return false;
     }
@@ -106,8 +109,8 @@ export async function openWorkspaceInDesktop(input: {
     if (navigationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(navigationResult);
       input.onError?.(
-        "Failed to start a new thread",
-        error instanceof Error ? error.message : "An error occurred.",
+        m(msg("Failed to start a new thread")),
+        error instanceof Error ? error.message : m(msg("An error occurred.")),
       );
       return false;
     }

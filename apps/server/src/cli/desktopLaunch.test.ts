@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as NetService from "@t3tools/shared/Net";
@@ -86,7 +87,7 @@ it.effect(
         "./missing-workspace",
       ]).pipe(
         Effect.provideService(DesktopAppResolver, installedDesktopApp),
-        Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer)),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer)),
         Effect.flip,
       );
       assert.instanceOf(error, DesktopOpenWorkspacePathError);
@@ -121,6 +122,7 @@ it.effect("bare t3 stays a server launch when a desktop app is installed", () =>
           Effect.provide(
             Layer.mergeAll(
               NodeServices.layer,
+              NodeCrypto.layer,
               NetService.layer,
               ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_HOME: baseDir } })),
             ),

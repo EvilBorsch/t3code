@@ -7,6 +7,7 @@ import {
   type McpProviderSessionConfig,
 } from "@t3tools/provider-core/server/mcpSession";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
   PI_T3_MCP_EXTENSION_FILENAME,
   PI_T3_MCP_EXTENSION_SOURCE,
@@ -37,7 +38,7 @@ const RESERVED_PI_LAUNCH_ARGUMENTS = new Set([
   "-v",
 ]);
 
-const PI_ARGUMENTS_WITH_VALUES = new Set([
+export const PI_ARGUMENTS_WITH_VALUES = new Set([
   "--api-key",
   "--append-system-prompt",
   "--exclude-tools",
@@ -237,7 +238,16 @@ export const materializePiT3McpExtension = Effect.fn("materializePiT3McpExtensio
   const dest = piT3McpExtensionDestPath(cacheDir);
   const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
   if (existing !== PI_T3_MCP_EXTENSION_SOURCE) {
-    yield* fs.writeFileString(dest, PI_T3_MCP_EXTENSION_SOURCE);
+    // Concurrent pi launches read this file: stage it in a per-call directory
+    // and rename so readers and other writers never see a partial file.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const stagingDir = yield* fs.makeTempDirectoryScoped({ directory: cacheDir });
+        const staging = `${stagingDir.replace(/\\/g, "/")}/${PI_T3_MCP_EXTENSION_FILENAME}`;
+        yield* fs.writeFileString(staging, PI_T3_MCP_EXTENSION_SOURCE);
+        yield* fs.rename(staging, dest).pipe(Effect.retry({ times: 3 }));
+      }),
+    );
   }
   return dest;
 });
@@ -249,6 +259,9 @@ export function buildPiRpcLaunch(input: {
   readonly extensionPath: string | undefined;
   readonly sessionPath?: string | undefined;
   readonly ephemeral?: boolean;
+  // T3 stops these processes as soon as they answer. They run --offline because Pi's startup
+  // catalog refresh renews expired OAuth tokens, and a stop mid-request loses the rotated one.
+  readonly shortLived?: boolean;
   readonly disableExtensions?: boolean;
   readonly disableTools?: boolean;
   readonly runtimeMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
@@ -258,7 +271,14 @@ export function buildPiRpcLaunch(input: {
 } {
   const hasT3Extension = input.disableExtensions !== true && input.extensionPath !== undefined;
   const mcpSession = hasT3Extension ? input.mcpSession : undefined;
-  const systemPrompt = t3OrchestrationSystemPrompt(t3AgentTools(mcpSession));
+  const tools = t3AgentTools(mcpSession);
+  const systemPrompt =
+    [
+      t3OrchestrationSystemPrompt(tools)?.trim(),
+      tools.pullRequests ? PULL_REQUEST_LINKING_INSTRUCTIONS : undefined,
+    ]
+      .filter((part) => part !== undefined)
+      .join("\n\n") || undefined;
   const extensionSafeArgs =
     input.disableExtensions === true
       ? withoutExplicitExtensions(input.launchArgs)
@@ -274,6 +294,7 @@ export function buildPiRpcLaunch(input: {
         ? ["--session", input.sessionPath]
         : []),
     ...launchArgs,
+    ...(input.shortLived === true && !launchArgs.includes("--offline") ? ["--offline"] : []),
     // Restrictions must follow launch args so user flags cannot re-enable unattended tools/extensions.
     ...(input.disableExtensions === true ? ["--no-extensions"] : []),
     ...(input.disableTools === true ? ["--no-tools"] : []),
@@ -311,7 +332,7 @@ export function buildPiRpcLaunch(input: {
             [T3_MCP_URL_ENV]: mcpSession.endpoint,
             [T3_MCP_BEARER_ENV]: bearerTokenFromAuthorizationHeader(mcpSession.authorizationHeader),
           }),
-      ...(systemPrompt === undefined ? {} : { [T3_PI_SYSTEM_PROMPT_ENV]: systemPrompt.trim() }),
+      ...(systemPrompt === undefined ? {} : { [T3_PI_SYSTEM_PROMPT_ENV]: systemPrompt }),
     },
   };
 }
