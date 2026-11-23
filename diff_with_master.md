@@ -8,7 +8,7 @@
 > This file describes the **current** delta only. Features upstream has since absorbed, or that
 > its rewrites made obsolete, are listed once under _Absorbed or obsolete_ so nobody re-adds them.
 
-**Sync status 2026-11-20:** merged `origin/main` at `6edb53026b` (desktop `0.1.11`, migrations 078–102,
+**Sync status 2026-11-23:** merged `origin/main` at `d1a6c35f73` (desktop `0.1.11`, migrations 103–110,
 Node `26.13.1` per `engines`). Upstream now ships UI i18n (General Translation): fork UI strings go
 through `gt()` / `<T>` / `m(msg())` with keys in every locale catalog (`apps/web/src/i18n/translations`,
 mobile likewise), enforced by `t3code(no-untranslated-copy)` and `vp run i18n:check`. Since 2026-10-29 the
@@ -237,7 +237,7 @@ grants, so the app asked for folder access on every launch. `scripts/sign-macos-
 (+ test) is an electron-builder `afterSign` hook, wired by `scripts/build-desktop-artifact.ts`
 for unsigned mac builds, that ad-hoc signs the bundle. The ad-hoc cdhash changes per build, so
 macOS asks once per install; `T3CODE_DESKTOP_LOCAL_SIGN_IDENTITY=<self-signed cert>` gives an
-identity that survives rebuilds. Documented in `docs/operations/development.md`.
+identity that survives rebuilds.
 
 ## 14. Providers refresh when a chat opens
 
