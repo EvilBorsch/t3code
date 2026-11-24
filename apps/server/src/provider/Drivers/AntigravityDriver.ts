@@ -31,10 +31,7 @@ import { HttpClient } from "effect/http";
 import * as AcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import {
-  isAntigravityTextGenerationAvailable,
-  makeAntigravityTextGeneration,
-} from "../../textGeneration/AntigravityTextGeneration.ts";
+import { makeAntigravityTextGeneration } from "../../textGeneration/AntigravityTextGeneration.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import { brokenRuntimeError } from "../providerCompatibility.ts";
@@ -227,6 +224,7 @@ export const AntigravityDriver: ProviderDriver<
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
       cwd: string,
       baseEnv: NodeJS.ProcessEnv,
+      isolateCustomizations = false,
     ): Effect.fn.Return<
       {
         readonly executable: AntigravityInstallation.AntigravityExecutable;
@@ -274,6 +272,22 @@ export const AntigravityDriver: ProviderDriver<
             : cause,
         ),
       );
+      // Общие данные сохраняют авторизацию, а пустой GEMINI_HOME исключает хуки, MCP и правила.
+      const geminiHome = isolateCustomizations
+        ? yield* fileSystem
+            .makeTempDirectoryScoped({ directory: profile.geminiHome, prefix: "text-" })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderSetupError({
+                    instanceId,
+                    operation: "start",
+                    detail: "Could not create an Antigravity text generation profile.",
+                    cause,
+                  }),
+              ),
+            )
+        : profile.geminiHome;
       // Use one directory per process; shared cleanup could delete files another session still reads.
       // Remove after the child dies, best-effort on Windows where handles may outlive the kill;
       // the next driver start sweeps leftovers.
@@ -302,7 +316,8 @@ export const AntigravityDriver: ProviderDriver<
         executable,
         spawn: buildAntigravityAcpSpawnInput({
           installation: executable,
-          profile,
+          profile: { ...profile, geminiHome },
+          ...(isolateCustomizations ? { appDataDirectory: "../antigravity-acp" } : {}),
           cwd,
           baseEnv,
           auth,
@@ -312,7 +327,7 @@ export const AntigravityDriver: ProviderDriver<
     });
 
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
-      input: AntigravityAdapterV2RuntimeInput,
+      input: AntigravityAdapterV2RuntimeInput & { readonly isolateCustomizations?: boolean },
     ): Effect.fn.Return<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
       AcpErrors.AcpError | ProviderSetupError,
@@ -320,12 +335,17 @@ export const AntigravityDriver: ProviderDriver<
     > {
       // `buildAntigravityAcpSpawnInput` sets `extendEnv: false`, so thread variables only reach the
       // agent's shell through `baseEnv`.
-      const { processEnvironment: threadEnvironment, ...runtimeInput } = input;
+      const {
+        processEnvironment: threadEnvironment,
+        isolateCustomizations,
+        ...runtimeInput
+      } = input;
       const { executable, spawn } = yield* prepareSpawn(
         runtimeInput.cwd,
         threadEnvironment === undefined
           ? processEnvironment
           : { ...processEnvironment, ...threadEnvironment },
+        isolateCustomizations,
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...runtimeInput,
@@ -602,11 +622,7 @@ export const AntigravityDriver: ProviderDriver<
           Effect.provideService(Path.Path, path),
           Effect.catch(() => Effect.logWarning("Could not save Antigravity permission modes.")),
         ),
-      supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-        Effect.orElseSucceed(() => false),
-      ),
+      supportsTextGeneration: Effect.succeed(true),
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -657,6 +673,7 @@ export const AntigravityDriver: ProviderDriver<
         makeRuntime({
           cwd,
           mcpServers: [],
+          isolateCustomizations: true,
         }),
     });
 

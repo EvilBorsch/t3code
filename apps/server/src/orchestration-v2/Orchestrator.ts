@@ -5505,6 +5505,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   : {
                       lastTitleRegeneration: {
                         ...command.outcome,
+                        ...(command.outcome.status === "failed" &&
+                        (command.kind === "initial" ||
+                          thread.title === UNTITLED_THREAD_TITLE ||
+                          thread.lastTitleRegeneration?.retryOnNextMessage === true)
+                          ? { retryOnNextMessage: true }
+                          : {}),
                         requestId: command.requestId,
                         completedAt: now,
                       },
@@ -7491,20 +7497,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (yield* projectionStore.getMessageCount(command.threadId).pipe(mapDispatchError(command))) ===
         0 &&
       !hasTitleSetBeforeFirstMessage(projection.thread, command.titleSeed);
+    const retriesFailedTitle =
+      projection.thread.titleRegeneration == null &&
+      (projection.thread.title === UNTITLED_THREAD_TITLE ||
+        projection.thread.lastTitleRegeneration?.retryOnNextMessage === true);
     if (
       !isNativeMaintenanceCommand(command) &&
       (seedsUntitledThread ||
         (command.createdBy === "user" &&
           // A draft opened by `/compact` is titled after it, so only a chosen title stays here.
           projection.thread.titleRenamed !== true &&
-          ((projection.thread.title === UNTITLED_THREAD_TITLE &&
-            projection.thread.titleRegeneration == null) ||
-            (yield* onlyMaintenanceHistory))))
+          (retriesFailedTitle || (yield* onlyMaintenanceHistory))))
     ) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
         ...projection.thread,
-        title: command.titleSeed ?? projection.thread.title,
+        title: retriesFailedTitle
+          ? projection.thread.title
+          : (command.titleSeed ?? projection.thread.title),
         titleRegeneration: { requestId: command.commandId, startedAt: now },
         updatedAt: now,
       };

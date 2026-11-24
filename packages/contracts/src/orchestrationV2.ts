@@ -51,7 +51,7 @@ import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
-import { ThreadTitleRegenerationOutcome } from "./threadTitle.ts";
+import { ThreadTitleRegenerationKind, ThreadTitleRegenerationOutcome } from "./threadTitle.ts";
 import {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
@@ -493,6 +493,7 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
 
 const OrchestrationV2LastTitleRegeneration = Schema.Struct({
   ...ThreadTitleRegenerationOutcome.fields,
+  retryOnNextMessage: Schema.optional(Schema.Boolean),
   requestId: CommandId,
   completedAt: Schema.DateTimeUtc,
 });
@@ -3560,6 +3561,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     requestId: CommandId,
+    kind: Schema.optional(ThreadTitleRegenerationKind),
     title: Schema.optional(TrimmedNonEmptyString),
     outcome: Schema.optional(ThreadTitleRegenerationOutcome),
   }),

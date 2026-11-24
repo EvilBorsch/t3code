@@ -546,6 +546,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
 export function buildAntigravityAcpSpawnInput(input: {
   readonly installation: { readonly executablePath: string };
   readonly profile: AntigravityProfile;
+  readonly appDataDirectory?: string;
   readonly cwd: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly auth?: AntigravityAuthConfig;
@@ -558,8 +559,8 @@ export function buildAntigravityAcpSpawnInput(input: {
       "--gemini-dir",
       input.profile.geminiHome,
       "--app-data-dir",
-      // The CLI joins this beneath gemini-dir, including when the value is absolute.
-      "antigravity-acp",
+      // CLI трактует даже абсолютный путь относительно gemini-dir.
+      input.appDataDirectory ?? "antigravity-acp",
     ],
     cwd: input.cwd,
     env: antigravityEnvironment(

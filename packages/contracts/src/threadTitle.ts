@@ -11,6 +11,8 @@ export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
 export const ThreadTitleRegenerationStatus = Schema.Literals(["renamed", "unchanged", "failed"]);
 export type ThreadTitleRegenerationStatus = typeof ThreadTitleRegenerationStatus.Type;
 
+export const ThreadTitleRegenerationKind = Schema.Literals(["initial", "regenerate"]);
+
 export const ThreadTitleRegenerationOutcome = Schema.Struct({
   status: ThreadTitleRegenerationStatus,
   message: Schema.optional(Schema.String),
@@ -19,6 +21,7 @@ export type ThreadTitleRegenerationOutcome = typeof ThreadTitleRegenerationOutco
 
 export const LastThreadTitleRegeneration = Schema.Struct({
   ...ThreadTitleRegenerationOutcome.fields,
+  retryOnNextMessage: Schema.optional(Schema.Boolean),
   requestId: CommandId,
   completedAt: IsoDateTime,
 });

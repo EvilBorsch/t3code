@@ -147,6 +147,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     extendEnv: boolean | undefined;
     environment: Record<string, string | undefined>;
     profileDirectory: string | undefined;
+    hasGlobalHooks: boolean;
+    hasGlobalMcp: boolean;
     forceFileStorage: string | undefined;
     credentialKeys: ReadonlyArray<string>;
     geminiApiKey: string | undefined;
@@ -210,6 +212,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         extendEnv: command.options.extendEnv,
         environment: Object.fromEntries(Object.keys(environment).map((name) => [name, env(name)])),
         profileDirectory: env("GEMINI_HOME"),
+        hasGlobalHooks: yield* fs.exists(
+          path.join(env("GEMINI_HOME") ?? root, "config", "hooks.json"),
+        ),
+        hasGlobalMcp: yield* fs.exists(
+          path.join(env("GEMINI_HOME") ?? root, "config", "mcp_config.json"),
+        ),
         forceFileStorage: env("AGY_ACP_FORCE_FILE_STORAGE"),
         credentialKeys: Object.keys(environment).filter((key) =>
           blockedCredentialKeys.has(key.toUpperCase()),
@@ -317,6 +325,12 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
+        const configDirectory = h.path.join(h.profileDirectory, "config");
+        yield* h.fs.makeDirectory(configDirectory, { recursive: true });
+        const hooks = '{"impeccable":{"Stop":[{"type":"command","command":"do-not-run"}]}}';
+        const mcp = '{"mcpServers":{"global":{"command":"do-not-run"}}}';
+        yield* h.fs.writeFileString(h.path.join(configDirectory, "hooks.json"), hooks);
+        yield* h.fs.writeFileString(h.path.join(configDirectory, "mcp_config.json"), mcp);
         yield* h.refresh();
         const snapshot = yield* h.instance.snapshot.getSnapshot;
         expect(snapshot.status).toBe("ready");
@@ -382,6 +396,24 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             modelSelection: { instanceId: h.instance.instanceId, model: "gemini-test-low" },
           })
           .pipe(Effect.ignore);
+        const helperLaunch = h.launches
+          .filter((launch) => launch.tempDirectory !== undefined)
+          .at(-1);
+        expect(helperLaunch?.profileDirectory).not.toBe(h.profileDirectory);
+        expect(helperLaunch?.args).toEqual([
+          "acp",
+          "--gemini-dir",
+          helperLaunch?.profileDirectory,
+          "--app-data-dir",
+          "../antigravity-acp",
+        ]);
+        expect(helperLaunch?.hasGlobalHooks).toBe(false);
+        expect(helperLaunch?.hasGlobalMcp).toBe(false);
+        expect(yield* h.fs.exists(helperLaunch!.profileDirectory!)).toBe(false);
+        expect(yield* h.fs.readFileString(h.path.join(configDirectory, "hooks.json"))).toBe(hooks);
+        expect(yield* h.fs.readFileString(h.path.join(configDirectory, "mcp_config.json"))).toBe(
+          mcp,
+        );
         const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-chat-" });
         const threadId = ThreadId.make("thread-antigravity-capabilities");
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -397,6 +429,10 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           runtimePolicy,
         });
         yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+        const chatLaunch = h.launches.filter((launch) => launch.tempDirectory !== undefined).at(-1);
+        expect(chatLaunch?.profileDirectory).toBe(h.profileDirectory);
+        expect(chatLaunch?.hasGlobalHooks).toBe(true);
+        expect(chatLaunch?.hasGlobalMcp).toBe(true);
 
         const helper = {
           fs: { readTextFile: false, writeTextFile: false },

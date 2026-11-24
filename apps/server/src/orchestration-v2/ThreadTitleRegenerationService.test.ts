@@ -40,7 +40,6 @@ import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { placeholderThreadTitle } from "./placeholderThreadTitle.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
-import { UNTITLED_THREAD_TITLE } from "@t3tools/provider-core/server/threadTitleContext";
 
 const projectId = ProjectId.make("project:title-regeneration");
 const modelSelection = {
@@ -144,6 +143,7 @@ function makeHarness(
 function createThread(input: {
   readonly command: string;
   readonly thread: string;
+  readonly title?: string;
   readonly worktreePath?: string;
 }) {
   return Effect.gen(function* () {
@@ -154,7 +154,7 @@ function createThread(input: {
       commandId: CommandId.make(input.command),
       threadId,
       projectId,
-      title: "Seed title",
+      title: input.title ?? "Seed title",
       modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
@@ -171,6 +171,7 @@ function dispatchUserMessage(input: {
   readonly command: string;
   readonly threadId: ThreadId;
   readonly text: string;
+  readonly titleSeed?: string;
   readonly attachments?: ReadonlyArray<ChatAttachment>;
 }) {
   return Effect.gen(function* () {
@@ -181,6 +182,7 @@ function dispatchUserMessage(input: {
       threadId: input.threadId,
       messageId: MessageId.make(`${input.command}:message`),
       text: input.text,
+      ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
       attachments: input.attachments ?? [],
       modelSelection,
       dispatchMode: { type: "defer_start" },
@@ -737,7 +739,7 @@ describe("ThreadTitleRegenerationService", () => {
     }),
   );
 
-  it.effect("leaves the thread untitled when its model cannot title it", () =>
+  it.effect("keeps the first message as the title when generation fails and retries later", () =>
     Effect.gen(function* () {
       const cases = [
         {
@@ -747,6 +749,14 @@ describe("ThreadTitleRegenerationService", () => {
         {
           name: "generation fails after retries",
           options: { generateTitle: () => Effect.die(new Error("model unavailable")) },
+        },
+        {
+          name: "model returns a placeholder",
+          options: { generateTitle: () => Effect.succeed({ title: "Untitled" }) },
+        },
+        {
+          name: "model returns the default title",
+          options: { generateTitle: () => Effect.succeed({ title: "New thread" }) },
         },
       ];
       for (const testCase of cases) {
@@ -761,7 +771,7 @@ describe("ThreadTitleRegenerationService", () => {
           yield* dispatchUserMessage({
             command: "command:title:untitled:message",
             threadId,
-            text: "Investigate the flaky login test",
+            text: "  Investigate  failing login requests\nafter deploying the OAuth client  ",
           });
           const requestId = yield* armRegeneration({
             command: "command:title:untitled:1",
@@ -782,16 +792,80 @@ describe("ThreadTitleRegenerationService", () => {
           yield* Fiber.join(execution);
 
           const projection = yield* threads.getThreadProjection(threadId);
-          assert.equal(projection.thread.title, UNTITLED_THREAD_TITLE, testCase.name);
+          assert.equal(
+            projection.thread.title,
+            "Investigate failing login requests after deploying...",
+            testCase.name,
+          );
           assert.isNotOk(projection.thread.titleRegeneration, testCase.name);
+          assert.equal(projection.thread.lastTitleRegeneration?.status, "failed", testCase.name);
+
+          const manualRequestId = yield* armRegeneration({
+            command: "command:title:untitled:manual",
+            threadId,
+          });
+          yield* titleRegeneration.execute({
+            threadId,
+            requestId: manualRequestId,
+            kind: { type: "regenerate" },
+          });
 
           yield* dispatchUserMessage({
             command: "command:title:untitled:retry",
             threadId,
             text: "Also check the signup test",
+            titleSeed: "Also check the signup test",
           });
           const retried = yield* threads.getThreadProjection(threadId);
           assert.isOk(retried.thread.titleRegeneration, testCase.name);
+          assert.equal(
+            retried.thread.title,
+            "Investigate failing login requests after deploying...",
+            testCase.name,
+          );
+          const retry = yield* titleRegeneration
+            .execute({
+              threadId,
+              requestId: CommandId.make("command:title:untitled:retry"),
+              kind: {
+                type: "initial",
+                messageId: MessageId.make("command:title:untitled:retry:message"),
+              },
+            })
+            .pipe(Effect.forkChild);
+          yield* TestClock.adjust("1 minute");
+          yield* Fiber.join(retry);
+          const failedAgain = yield* threads.getThreadProjection(threadId);
+          assert.equal(
+            failedAgain.thread.title,
+            "Investigate failing login requests after deploying...",
+            testCase.name,
+          );
+          assert.isNotOk(failedAgain.thread.titleRegeneration, testCase.name);
+
+          if (testCase.options.providers === undefined) {
+            harness.generateThreadTitle.mockImplementation(() =>
+              Effect.succeed({ title: "Repair login" }),
+            );
+            yield* dispatchUserMessage({
+              command: "recover:message",
+              threadId,
+              text: "Verify the fix",
+            });
+            yield* titleRegeneration.execute({
+              threadId,
+              requestId: CommandId.make("recover:message"),
+              kind: { type: "initial", messageId: MessageId.make("recover:message:message") },
+            });
+            yield* dispatchUserMessage({
+              command: "recovered:follow-up",
+              threadId,
+              text: "Also check logout",
+            });
+            const recovered = yield* threads.getThreadProjection(threadId);
+            assert.equal(recovered.thread.title, "Repair login");
+            assert.isNotOk(recovered.thread.titleRegeneration);
+          }
         }).pipe(Effect.provide(harness.layer));
       }
     }),
@@ -1046,7 +1120,10 @@ describe("ThreadTitleRegenerationService", () => {
     }),
   );
 
-  it.effect("clears the marker and keeps the title when generation fails", () =>
+  it.effect.each([
+    { title: "Seed title", expected: "Seed title" },
+    { title: "Untitled", expected: "Some conversation" },
+  ])("settles a failed regeneration of $title with a readable title", ({ title, expected }) =>
     Effect.gen(function* () {
       const harness = makeHarness({
         generateTitle: () =>
@@ -1064,6 +1141,7 @@ describe("ThreadTitleRegenerationService", () => {
         const threadId = yield* createThread({
           command: "command:title:failure:create",
           thread: "thread:title:failure",
+          title,
         });
         yield* dispatchUserMessage({
           command: "command:title:failure:message",
@@ -1076,13 +1154,21 @@ describe("ThreadTitleRegenerationService", () => {
 
         assert.equal(harness.generateThreadTitle.mock.calls.length, 1);
         const projection = yield* threads.getThreadProjection(threadId);
-        assert.equal(projection.thread.title, "Seed title");
+        assert.equal(projection.thread.title, expected);
         assert.isNotOk(projection.thread.titleRegeneration);
         assert.deepInclude(projection.thread.lastTitleRegeneration, {
           requestId,
           status: "failed",
           message: "model unavailable",
         });
+        yield* dispatchUserMessage({
+          command: "command:title:failure:follow-up",
+          threadId,
+          text: "Try again after recovery",
+        });
+        const followUp = yield* threads.getThreadProjection(threadId);
+        assert.equal(followUp.thread.title, expected);
+        assert.equal(followUp.thread.titleRegeneration != null, title === "Untitled");
       }).pipe(Effect.provide(harness.layer));
     }),
   );

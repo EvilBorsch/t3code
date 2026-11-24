@@ -25,7 +25,6 @@ import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessio
 
 import {
   type AntigravityTextGenerationOptions,
-  isAntigravityTextGenerationAvailable,
   makeAntigravityTextGeneration,
 } from "./AntigravityTextGeneration.ts";
 
@@ -608,31 +607,29 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
     {
       name: "hooks.json",
       value: '{"default":{"PreInvocation":[{"command":"do-not-run"}]}}',
-      available: false,
     },
     {
       name: "mcp_config.json",
       value: '{"mcpServers":{"server":{"command":"do-not-run"}}}',
-      available: false,
     },
-    { name: "hooks.json", value: "invalid JSON", available: false },
-    { name: "mcp_config.json", value: "x".repeat(64_001), available: false },
-    { name: "hooks.json", value: "{}", available: true },
-    { name: "hooks.json", value: '{"hooks":{}}', available: true },
-    { name: "mcp_config.json", value: '{"mcpServers":{}}', available: true },
-    { name: "mcp_config.json", value: "", available: true },
-  ])("checks $name before starting a helper, available=$available", ({ name, value, available }) =>
+    { name: "hooks.json", value: "invalid JSON" },
+    { name: "mcp_config.json", value: "x".repeat(64_001) },
+    { name: "hooks.json", value: "{}" },
+    { name: "hooks.json", value: '{"hooks":{}}' },
+    { name: "mcp_config.json", value: '{"mcpServers":{}}' },
+    { name: "mcp_config.json", value: "" },
+  ])("generates a title independently of the global $name", ({ name, value }) =>
     Effect.gen(function* () {
       const fixture = yield* makeFixture();
       const configDirectory = fixture.path.join(fixture.profileDirectory, "config");
       yield* fixture.fs.makeDirectory(configDirectory, { recursive: true });
       yield* fixture.fs.writeFileString(fixture.path.join(configDirectory, name), value);
-      expect(yield* isAntigravityTextGenerationAvailable(fixture.profileDirectory)).toBe(available);
-      const result = yield* fixture.textGeneration
-        .generateThreadTitle(fixture.titleInput)
-        .pipe(Effect.exit);
-      expect(Exit.isSuccess(result)).toBe(available);
-      expect(fixture.state.workspaces.length).toBe(available ? 1 : 0);
+      const result = yield* fixture.textGeneration.generateThreadTitle(fixture.titleInput);
+      expect(result).toEqual({ title: "Repair login" });
+      expect(fixture.state.workspaces.length).toBe(1);
+      expect(yield* fixture.fs.readFileString(fixture.path.join(configDirectory, name))).toBe(
+        value,
+      );
       yield* fixture.assertCleaned;
     }),
   );

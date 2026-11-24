@@ -29,9 +29,6 @@ const MAX_OUTPUT_CHARS = 128_000;
 const isTextGenerationError = Schema.is(TextGenerationError);
 const isProviderSetupError = Schema.is(ProviderSetupError);
 const isNativeSessionId = Schema.is(Schema.String.check(Schema.isUUID(4)));
-const Configuration = Schema.Record(Schema.String, Schema.Unknown);
-const decodeConfiguration = Schema.decodeEffect(Schema.fromJsonString(Configuration));
-const decodeConfigurationObject = Schema.decodeUnknownEffect(Configuration);
 
 type AntigravityTextRuntime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
@@ -59,6 +56,7 @@ type AntigravityTextRuntime = Pick<
 export interface AntigravityTextGenerationOptions {
   readonly profileDirectory: string;
   readonly defaultModel?: Effect.Effect<string | undefined>;
+  /** Создаёт сессию без пользовательских хуков, MCP, правил и навыков. */
   readonly makeRuntime: (
     cwd: string,
   ) => Effect.Effect<AntigravityTextRuntime, AcpError | ProviderSetupError, Scope.Scope>;
@@ -67,42 +65,6 @@ export interface AntigravityTextGenerationOptions {
     task: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | ProviderSetupError, R | Scope.Scope>;
 }
-
-/** Global hooks and MCP servers can run before a helper can deny a tool request. */
-export const isAntigravityTextGenerationAvailable = Effect.fn(
-  "isAntigravityTextGenerationAvailable",
-)(function* (profileDirectory: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  for (const name of ["hooks.json", "mcp_config.json"]) {
-    const configurationPath = path.join(profileDirectory, "config", name);
-    if (!(yield* fs.exists(configurationPath))) {
-      continue;
-    }
-    const info = yield* fs.stat(configurationPath);
-    if (info.type !== "File" || info.size > 64_000n) {
-      return false;
-    }
-    // CLI 1.5.8 writes a 0-byte mcp_config.json before any server exists.
-    const empty = yield* fs.readFileString(configurationPath).pipe(
-      Effect.flatMap((text) =>
-        text.trim().length === 0
-          ? Effect.succeed(true)
-          : decodeConfiguration(text).pipe(
-              Effect.flatMap((configuration) =>
-                decodeConfigurationObject(
-                  configuration[name === "hooks.json" ? "hooks" : "mcpServers"] ?? configuration,
-                ),
-              ),
-              Effect.map((configuration) => Object.keys(configuration).length === 0),
-            ),
-      ),
-      Effect.orElseSucceed(() => false),
-    );
-    if (!empty) return false;
-  }
-  return true;
-});
 
 export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGeneration")(function* (
   options: AntigravityTextGenerationOptions,
@@ -137,25 +99,12 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
     return true;
   });
 
-  const available = isAntigravityTextGenerationAvailable(options.profileDirectory).pipe(
-    Effect.provideService(FileSystem.FileSystem, fs),
-    Effect.provideService(Path.Path, path),
-  );
-
   const runAntigravityJson = Effect.fn("AntigravityTextGeneration.runJson")(
     function* <S extends Schema.Top>(input: TextGenerationOperations.Request<S>) {
       const { operation } = input;
       const scope = yield* Scope.make();
       yield* Effect.addFinalizer((exit) => Scope.close(scope, exit));
       const helper = Effect.gen(function* () {
-        if (!(yield* available)) {
-          return yield* new TextGenerationError({
-            operation,
-            detail:
-              "Antigravity text generation is unavailable for profiles with global hooks or MCP configuration. Select another system model.",
-          });
-        }
-
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-text-" });
         let sessionId: string | undefined;
         yield* Effect.addFinalizer(() =>

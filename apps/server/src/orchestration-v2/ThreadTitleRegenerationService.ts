@@ -1,5 +1,7 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
+import { truncate } from "@t3tools/shared/String";
 import {
   CommandId,
   isProviderAvailable,
@@ -60,7 +62,7 @@ export class ThreadTitleRegenerationService extends Context.Service<
 type Outcome =
   | { readonly status: "renamed"; readonly title: string }
   | { readonly status: "unchanged" }
-  | { readonly status: "failed"; readonly message: string };
+  | { readonly status: "failed"; readonly message: string; readonly title?: string };
 
 const MAX_FAILURE_MESSAGE_LENGTH = 300;
 const isTextGenerationError = Schema.is(TextGenerationError);
@@ -131,15 +133,14 @@ const make = Effect.gen(function* () {
         commandId: CommandId.make(`${input.requestId}:title-complete`),
         threadId: input.threadId,
         requestId: input.requestId,
-        ...(input.outcome.status === "renamed" ? { title: input.outcome.title } : {}),
-        ...(input.kind.type === "regenerate"
-          ? {
-              outcome: {
-                status: input.outcome.status,
-                ...(input.outcome.status === "failed" ? { message: input.outcome.message } : {}),
-              },
-            }
+        kind: input.kind.type,
+        ...(input.outcome.status === "renamed" || input.outcome.status === "failed"
+          ? { title: input.outcome.title }
           : {}),
+        outcome: {
+          status: input.outcome.status,
+          ...(input.outcome.status === "failed" ? { message: input.outcome.message } : {}),
+        },
       })
       .pipe(Effect.asVoid);
 
@@ -190,11 +191,24 @@ const make = Effect.gen(function* () {
   const execute: ThreadTitleRegenerationService["Service"]["execute"] = Effect.fn(
     "ThreadTitleRegenerationService.execute",
   )(function* (input) {
-    // Ручная перегенерация при неудаче оставляет прежний заголовок.
-    const failed = (message: string): Outcome =>
-      input.kind.type === "initial"
-        ? { status: "renamed", title: UNTITLED_THREAD_TITLE }
-        : { status: "failed", message };
+    const failed = Effect.fn("ThreadTitleRegenerationService.failed")(function* (message: string) {
+      const { thread, messages } = yield* threads.getThreadRecords(input.threadId, ["messages"], {
+        messageRoles: ["user"],
+      });
+      if (input.kind.type === "regenerate" && thread.title !== UNTITLED_THREAD_TITLE) {
+        return { status: "failed" as const, message };
+      }
+      const first = messages.find((candidate) => !candidate.streaming);
+      const text =
+        first === undefined || isAttachmentOnlyBootstrapPrompt(first.text)
+          ? ""
+          : assistantCitationsToPlainText(first.text).trim().replace(/\s+/gu, " ").normalize("NFC");
+      return {
+        status: "failed" as const,
+        message,
+        title: truncate(text || first?.attachments[0]?.name || thread.title),
+      };
+    });
     const outcome: Outcome | { readonly status: "stale" } = yield* Effect.gen(function* () {
       const projection = yield* threads.getThreadRecords(
         input.threadId,
@@ -253,7 +267,8 @@ const make = Effect.gen(function* () {
         };
       }
       const modelSelection = yield* threadModelForTitle(projection.thread.modelSelection);
-      if (modelSelection === null) return failed("This thread's model cannot generate titles.");
+      if (modelSelection === null)
+        return yield* failed("This thread's model cannot generate titles.");
       const settings = resolveProjectSettings(
         yield* serverSettings.getSettings,
         projection.thread.projectId,
@@ -275,8 +290,10 @@ const make = Effect.gen(function* () {
         projectId: projection.thread.projectId,
       });
       const generatedTitle = result.title.trim();
-      return generatedTitle === "New thread" ||
-        (input.kind.type === "regenerate" && generatedTitle === projection.thread.title.trim())
+      if (generatedTitle === UNTITLED_THREAD_TITLE || generatedTitle === "New thread") {
+        return yield* failed("The model returned a placeholder title.");
+      }
+      return input.kind.type === "regenerate" && generatedTitle === projection.thread.title.trim()
         ? { status: "unchanged" as const }
         : { status: "renamed" as const, title: result.title };
     }).pipe(
@@ -291,7 +308,7 @@ const make = Effect.gen(function* () {
               threadId: input.threadId,
               requestId: input.requestId,
               cause,
-            }).pipe(Effect.as(failed(failureMessage(cause)))),
+            }).pipe(Effect.andThen(failed(failureMessage(cause)))),
       ),
     );
 
