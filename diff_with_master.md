@@ -8,8 +8,9 @@
 > This file describes the **current** delta only. Features upstream has since absorbed, or that
 > its rewrites made obsolete, are listed once under _Absorbed or obsolete_ so nobody re-adds them.
 
-**Sync status 2026-11-23:** merged `origin/main` at `d1a6c35f73` (desktop `0.1.11`, migrations 103–110,
-Node `26.13.1` per `engines`). Upstream now ships UI i18n (General Translation): fork UI strings go
+**Sync status 2026-11-25:** merged `origin/main` at `21a96989b0` (upstream reworked telemetry
+defaults: CI detection, `DO_NOT_TRACK`; the fork's opt-in is re-applied, see §19). Previous sync
+2026-11-23 at `d1a6c35f73` (desktop `0.1.11`, migrations 103–110, Node `26.13.1` per `engines`). Upstream now ships UI i18n (General Translation): fork UI strings go
 through `gt()` / `<T>` / `m(msg())` with keys in every locale catalog (`apps/web/src/i18n/translations`,
 mobile likewise), enforced by `t3code(no-untranslated-copy)` and `vp run i18n:check`. Since 2026-10-29 the
 fork lives on `main` of `EvilBorsch/t3code` (local `main` tracks `fork/main`); the older branches
@@ -30,7 +31,7 @@ git diff --stat origin/main...HEAD
 is ahead, `git merge origin/main`, resolve, push `main` to `fork`, then rebuild and reinstall the desktop app (see
 _Building and installing_). On the Windows checkout the remotes are named `origin` (fork) and `upstream`
 (pingdotgg), so there it is `git merge upstream/main` and `git push origin main`. Treat every section below as fork-owned when resolving conflicts:
-never take upstream's side of those files wholesale. Upstream's lint now rejects off-scale
+never take upstream's side of those files wholesale, and check §19 (telemetry) after every merge. Upstream's lint now rejects off-scale
 Tailwind values and restyled `components/ui` exports (`shadcn/no-arbitrary-values`,
 `shadcn/no-restyle`, `shadcn/no-raw-colors`); run `vp lint` on the fork files after every merge.
 
@@ -366,18 +367,40 @@ fresh session never compacts first. Browser test: `ChatView.handoffCompaction.br
 draft). User doc: `docs/user/providers-claude.md`. Upstream's **mobile app** (#34263) compacts stale
 Claude threads before sending with no chip; that is upstream's and not covered by this section.
 
-## 19. Telemetry off by default
+## 19. Telemetry forbidden
 
-Upstream sends product events and relay traces unless `T3CODE_TELEMETRY_ENABLED=false`. The fork
-inverts the default; `T3CODE_TELEMETRY_ENABLED=true` opts in. One default per layer:
-`apps/server/src/telemetry/AnalyticsService.ts` (`withDefault(false)`),
-`packages/shared/src/otelEnvironment.ts` `isRelayTracingEnabled` (server relay client,
-`t3 connect`, desktop `getRelayTelemetryEnabled`), `apps/web/src/cloud/publicConfig.ts` (upstream's
-`relayTelemetryEnabled()`: a browser without the desktop bridge never exports; the desktop answers
-`null` until the login shell is read only when the process env already opted in, else `false`).
-Tests: `AnalyticsService.test.ts`,
-`otelEnvironment.test.ts`, desktop `ipc/methods/window.test.ts`, web `lib/runtime.test.ts`. User
-doc: `docs/user/telemetry.md`. Not covered: mobile store builds (own Settings toggle).
+**Hard rule of the fork: nothing leaves the machine for T3's telemetry unless the user explicitly
+sets `T3CODE_TELEMETRY_ENABLED=true`.** Upstream sends product events (`ingest.t3.codes` → PostHog)
+and relay traces (Axiom) by default and only skips CI runners and `DO_NOT_TRACK=1`. The fork keeps
+upstream's code and its `DO_NOT_TRACK` / managed-policy / OTel kill switches, but every default is
+`false`. Upstream's agent feedback reports go out through `AnalyticsService.record`, so they are
+covered by the same gate.
+
+Every guarded line carries a `ФОРК-ТЕЛЕМЕТРИЯ` comment. **When resolving a merge, never take
+upstream's side of these lines**; upstream rewrites them regularly (2026-11-25: CI detection and
+`DO_NOT_TRACK`), and a silent auto-merge can flip the default back on.
+
+| Layer                                                                                                                         | Fork line                                                                                                                                                           | Upstream default it replaces               |
+| ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Product analytics                                                                                                             | `apps/server/src/telemetry/AnalyticsService.ts`: `const enabledByDefault = false`                                                                                   | `!isCiEnvironment(hostEnvironment)`        |
+| Relay tracing (server, `t3 connect`, desktop `getRelayTelemetryEnabled`, the `relayTracingAllowed` the server sends browsers) | `packages/shared/src/otelEnvironment.ts` `isRelayTracingEnabled`: `telemetry.value === true`                                                                        | `telemetry.value ?? !isCiEnvironment(env)` |
+| Relay tracing in the web renderer                                                                                             | `apps/web/src/cloud/publicConfig.ts` `relayTelemetryEnabled()`: `false` outside a window and for the hosted app; otherwise the desktop bridge or the server answers | `true` in both cases                       |
+
+Tests that pin the defaults: `AnalyticsService.test.ts` ("does not send batch requests when
+telemetry is left unset"), `otelEnvironment.test.ts` ("stays off until opted in…"), server
+`cloud/relayTracing.test.ts` ("reports the server's relay tracing policy to clients"), web
+`lib/runtime.test.ts` (hosted app and browser without a server answer export nothing), desktop
+`ipc/methods/window.test.ts`. User doc: `docs/user/telemetry.md` (opt-in wording, keep it on
+merges). After every upstream merge:
+
+```bash
+git grep -n "ФОРК-ТЕЛЕМЕТРИЯ"     # 3 code sites + test notes must still be there
+git grep -n "isCiEnvironment(" -- apps packages ':!*.test.ts'   # must not gate a default again
+```
+
+Not covered: the mobile app (store builds are upstream's; crash reports default on with their own
+**Send crash reports** toggle, mobile relay tracing has no toggle) and **Publish agent activity**
+(a relay feature for mobile notifications, not telemetry; Settings → Sharing & access).
 
 ## 20. Thread titles come from the thread's own model
 
