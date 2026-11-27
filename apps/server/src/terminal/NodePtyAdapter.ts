@@ -94,13 +94,10 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* (
 
   const helperPath = yield* resolveNodePtySpawnHelperPath(resolvePackageJson);
   if (!helperPath || ensuredSpawnHelperPaths.has(helperPath)) return;
-  ensuredSpawnHelperPaths.add(helperPath);
-
-  if (!(yield* fs.exists(helperPath))) {
-    return;
+  if (yield* fs.exists(helperPath)) {
+    yield* fs.chmod(helperPath, 0o755).pipe(Effect.orElseSucceed(() => undefined));
   }
-
-  yield* fs.chmod(helperPath, 0o755).pipe(Effect.orElseSucceed(() => undefined));
+  ensuredSpawnHelperPaths.add(helperPath);
 });
 
 // node-pty has no public readiness event; ready_datapipe sets pid before our listener.
@@ -261,19 +258,20 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
       }),
   }).pipe(Effect.orDie);
 
-  const ensureNodePtySpawnHelperExecutableCached = yield* Effect.cached(
-    ensureNodePtySpawnHelperExecutable(resolvePackageJson).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-      Effect.provideService(HostProcess.Platform, platform),
-      Effect.provideService(HostProcess.Architecture, architecture),
-      Effect.orElseSucceed(() => undefined),
-    ),
+  const ensureSpawnHelperExecutable = ensureNodePtySpawnHelperExecutable(resolvePackageJson).pipe(
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+    Effect.provideService(HostProcess.Platform, platform),
+    Effect.provideService(HostProcess.Architecture, architecture),
+    Effect.orElseSucceed(() => undefined),
+    // Terminal startup runs uninterruptibly; a stalled helper check must not hold its locks.
+    Effect.interruptible,
+    Effect.timeoutOrElse({ duration: "5 seconds", orElse: () => Effect.void }),
   );
 
   return PtyAdapter.PtyAdapter.of({
     spawn: Effect.fn("NodePtyAdapter.spawn")(function* (input) {
-      yield* ensureNodePtySpawnHelperExecutableCached;
+      yield* ensureSpawnHelperExecutable;
       // ConPTY ignores node-pty's name option for TERM; set it explicitly to avoid missing/16-color values.
       const env =
         platform === "win32" && input.env["TERM"] === undefined

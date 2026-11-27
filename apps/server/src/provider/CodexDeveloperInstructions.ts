@@ -27,6 +27,7 @@ export interface CodexRuntimeInfo {
 export function buildCodexAdditionalContext(
   runtime: CodexRuntimeInfo,
   tools: T3AgentTools,
+  nativeSubagents = true,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const toolInstructions = [
     tools.browser ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : "",
@@ -37,7 +38,7 @@ export function buildCodexAdditionalContext(
   // Split values to fit per-entry caps; number keys because Codex emits them in key order.
   return {
     ...Object.fromEntries(
-      t3OrchestrationSections(tools).map((section, index) => [
+      t3OrchestrationSections(tools, nativeSubagents).map((section, index) => [
         `t3_code_orchestration_${String(index + 1).padStart(2, "0")}`,
         { kind: "application" as const, value: section },
       ]),
