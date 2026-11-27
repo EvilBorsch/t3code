@@ -1,0 +1,190 @@
+name: Fork desktop release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: fork-desktop-release
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  bundle:
+    if: github.repository == 'EvilBorsch/t3code' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - id: version
+        run: echo "version=0.1.$((10000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+      - name: Build versioned desktop bundle
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node scripts/update-release-package-versions.ts "$RELEASE_VERSION"
+          vp run build:desktop:bundle
+          manifest=apps/server/dist/client/.vite/manifest.json
+          if [[ -f "$manifest" ]]; then
+            cp "$manifest" apps/server/dist/client/vite-manifest.release.json
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: js-bundle
+          path: |
+            apps/server/dist
+            apps/desktop/dist-electron
+          if-no-files-found: error
+
+  desktop:
+    needs: bundle
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {
+              label: macOS arm64,
+              runner: macos-26,
+              platform: mac,
+              target: dmg,
+              arch: arm64,
+              rust: aarch64-apple-darwin,
+              resource: darwin-arm64,
+              cli: true,
+            }
+          - {
+              label: macOS x64,
+              runner: macos-15-intel,
+              platform: mac,
+              target: dmg,
+              arch: x64,
+              rust: x86_64-apple-darwin,
+              resource: darwin-x64,
+              cli: false,
+            }
+          - {
+              label: Linux x64,
+              runner: ubuntu-24.04,
+              platform: linux,
+              target: AppImage,
+              arch: x64,
+              rust: x86_64-unknown-linux-gnu,
+              resource: linux-x64,
+              cli: true,
+            }
+          - {
+              label: Linux arm64,
+              runner: ubuntu-24.04-arm,
+              platform: linux,
+              target: AppImage,
+              arch: arm64,
+              rust: aarch64-unknown-linux-gnu,
+              resource: linux-arm64,
+              cli: true,
+            }
+          - {
+              label: Windows x64,
+              runner: ubuntu-24.04,
+              verify: windows-2025,
+              platform: win,
+              target: nsis,
+              arch: x64,
+              rust: x86_64-pc-windows-msvc,
+              resource: win32-x64,
+              cli: true,
+            }
+          - {
+              label: Windows arm64,
+              runner: ubuntu-24.04,
+              verify: windows-11-arm,
+              platform: win,
+              target: nsis,
+              arch: arm64,
+              rust: aarch64-pc-windows-msvc,
+              resource: win32-arm64,
+              cli: true,
+            }
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.bundle.outputs.version }}
+      ref: ${{ github.sha }}
+      release_channel: stable
+      label: ${{ matrix.label }}
+      runner: ${{ matrix.runner }}
+      platform: ${{ matrix.platform }}
+      target: ${{ matrix.target }}
+      arch: ${{ matrix.arch }}
+      rust_target: ${{ matrix.rust }}
+      resource_key: ${{ matrix.resource }}
+      cli_archive: ${{ matrix.cli }}
+      verify_runner: ${{ matrix.verify || '' }}
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+
+  publish:
+    needs: [bundle, desktop]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/scripts...
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release-assets
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: release-assets
+      - name: Verify and publish platform assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.bundle.outputs.version }}
+        run: |
+          set -euo pipefail
+          node scripts/merge-release-update-manifests.ts release-assets
+          cd release-assets
+          rm -f builder-debug*.yml
+          sha256sum -- * > SHA256SUMS
+          tag="v$RELEASE_VERSION"
+          if release=$(gh release view "$tag" --json isDraft,targetCommitish 2>/dev/null); then
+            if [[ $(jq -r .isDraft <<< "$release") != true ]]; then
+              exit 0
+            fi
+            test "$(jq -r .targetCommitish <<< "$release")" = "$GITHUB_SHA"
+            gh release upload "$tag" --clobber -- ./*
+          else
+            gh release create "$tag" --draft --target "$GITHUB_SHA" \
+              --title "EvilBorsch T3 Code $RELEASE_VERSION" --notes "Built from main at $GITHUB_SHA." -- ./*
+          fi
+          gh release edit "$tag" --draft=false --latest

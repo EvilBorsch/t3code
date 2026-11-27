@@ -53,6 +53,30 @@ it("resolves T3CODE_DESKTOP_BINARY first when executable", () => {
   );
 });
 
+it("opens projects in the installed fork on Windows", () => {
+  const homeDirectory = NodePath.resolve("test-user");
+  const localAppData = NodePath.join(homeDirectory, "AppData", "Local");
+  const resolved = resolveDesktopBinaryPath({
+    platform: "win32",
+    homeDirectory,
+    env: { LOCALAPPDATA: localAppData },
+    isExecutable: () => true,
+  });
+
+  assert.deepStrictEqual(
+    resolved,
+    Option.some({
+      binaryPath: NodePath.join(
+        localAppData,
+        "Programs",
+        "T3Code-EvilBorsch",
+        "T3 Code (EvilBorsch).exe",
+      ),
+      label: "T3 Code (EvilBorsch)",
+    }),
+  );
+});
+
 it("includes macOS app bundle path for Nightly", () => {
   const candidates = listDesktopBinaryCandidates({
     platform: "darwin",

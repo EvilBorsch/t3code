@@ -155,6 +155,7 @@ function AboutVersionSection() {
   const gt = useGT();
   const messages = useMessages();
   const updateState = useDesktopUpdateState();
+  const usesForkFeed = updateState?.source === "fork";
   const [switchChannel, setSwitchChannel] = useState<DesktopUpdateChannel | null>(null);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
   const { environments } = useEnvironments();
@@ -267,10 +268,13 @@ function AboutVersionSection() {
     }
 
     if (typeof bridge.checkForUpdate !== "function") return;
-    void checkProviderUpdates();
+    if (!usesForkFeed) void checkProviderUpdates();
     void bridge
       .checkForUpdate()
       .then((result) => {
+        if (usesForkFeed && result.state.status === "available") {
+          return downloadLocalUpdate(bridge, { notifyDownloaded: true });
+        }
         if (!result.checked) {
           toastManager.add(
             stackedThreadToast({
@@ -313,7 +317,12 @@ function AboutVersionSection() {
     ...(appOffTrack ? {} : { "up-to-date": gt("Up to Date") }),
   };
   const buttonLabel =
-    actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? gt("Check for Updates");
+    usesForkFeed &&
+    (action === "download" || action === "none") &&
+    updateState?.status !== "checking" &&
+    updateState?.status !== "downloading"
+      ? gt("Update T3 from fork")
+      : (actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? gt("Check for Updates"));
   const description =
     action === "download" || action === "install"
       ? gt("Update available.")
@@ -345,7 +354,7 @@ function AboutVersionSection() {
           </Tooltip>
         }
       />
-      {hasDesktopBridge ? (
+      {hasDesktopBridge && !usesForkFeed ? (
         <SettingsRow
           {...setting("update-track")}
           description={

@@ -91,6 +91,34 @@ const nextPublishedState = (emit: () => void) =>
   });
 
 describe("DesktopUpdates", () => {
+  it.effect("offers updates from the fork even when Nightly was previously selected", () => {
+    const harness = makeHarness({
+      appUpdateYml: "provider: github\nowner: EvilBorsch\nrepo: t3code\n",
+      env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+      platform: "win32",
+      savedChannel: "nightly",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        const state = yield* updates.getState;
+        assert.equal(state.source, "fork");
+        assert.equal(state.channel, "latest");
+        assert.isTrue(state.enabled);
+
+        const offer = yield* nextPublishedState(() =>
+          harness.emit("update-available", { version: "1.2.4" }),
+        );
+        assert.equal(offer.status, "available");
+        assert.equal(offer.availableVersion, "1.2.4");
+        assert.equal(offer.source, "fork");
+      }),
+    ).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
     Effect.gen(function* () {
       const linuxState = (packageType: string | undefined) =>

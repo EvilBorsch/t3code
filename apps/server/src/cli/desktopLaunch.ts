@@ -123,6 +123,10 @@ export function listDesktopBinaryCandidates(input: {
       ...(programFiles ? [programFiles] : []),
     ];
     for (const root of winRoots) {
+      pushCandidate(
+        NodePath.join(root, "T3Code-EvilBorsch", "T3 Code (EvilBorsch).exe"),
+        "T3 Code (EvilBorsch)",
+      );
       for (const appName of DESKTOP_APP_NAMES) {
         pushCandidate(NodePath.join(root, appName, "t3code.exe"), appName);
       }

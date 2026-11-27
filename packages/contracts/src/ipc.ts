@@ -292,6 +292,7 @@ export interface DesktopRuntimeInfo {
 }
 
 export interface DesktopUpdateState {
+  source?: "fork";
   enabled: boolean;
   status: DesktopUpdateStatus;
   channel: DesktopUpdateChannel;
@@ -339,6 +340,7 @@ export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
 });
 
 export const DesktopUpdateStateSchema = Schema.Struct({
+  source: Schema.optionalKey(Schema.Literal("fork")),
   enabled: Schema.Boolean,
   status: DesktopUpdateStatusSchema,
   channel: DesktopUpdateChannelSchema,

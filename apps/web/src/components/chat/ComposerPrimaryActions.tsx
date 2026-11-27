@@ -506,28 +506,28 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   return withStopButton(
     <div data-chat-composer-compact-send="true" className="flex items-center gap-2">
       <SharedTooltipTrigger
-          render={
-            <button
-              type="button"
-              className="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-(--control-radius) px-2 font-medium text-base text-foreground/80 tabular-nums outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 sm:text-sm [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:text-muted-foreground"
-              {...pointerFocusProps}
-              aria-label={compactTooltip}
-              disabled={
-                !canOperateThread ||
-                isSendBusy ||
-                isEnvironmentUnavailable ||
-                (hasSendableContent && isSendDisabled)
-              }
-              onClick={onCompactAndSend}
-            />
-          }
+        render={
+          <button
+            type="button"
+            className="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-(--control-radius) px-2 font-medium text-base text-foreground/80 tabular-nums outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 sm:text-sm [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:text-muted-foreground"
+            {...pointerFocusProps}
+            aria-label={compactTooltip}
+            disabled={
+              !canOperateThread ||
+              isSendBusy ||
+              isEnvironmentUnavailable ||
+              (hasSendableContent && isSendDisabled)
+            }
+            onClick={onCompactAndSend}
+          />
+        }
         label={compactTooltip}
       >
-          <Minimize2Icon aria-hidden="true" />
-          <span className="@max-[480px]/composer-surface:hidden">
-            {gt("Compact", { $context: "verb, compact history before sending" })}
-          </span>
-          <span className="text-muted-foreground">{compactTokens}</span>
+        <Minimize2Icon aria-hidden="true" />
+        <span className="@max-[480px]/composer-surface:hidden">
+          {gt("Compact", { $context: "verb, compact history before sending" })}
+        </span>
+        <span className="text-muted-foreground">{compactTokens}</span>
       </SharedTooltipTrigger>
       {children}
       {submit}

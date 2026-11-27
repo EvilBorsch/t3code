@@ -400,6 +400,18 @@ export const make = Effect.gen(function* () {
   const mockUpdates = config.mockUpdates && policy.message === null;
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
+  const usesForkFeed = Ref.get(appUpdateYmlConfigRef).pipe(
+    Effect.map((config) => {
+      const feed = Option.getOrUndefined(config);
+      return (
+        !mockUpdates &&
+        policy.feedUrl === undefined &&
+        feed?.provider === "github" &&
+        feed.owner?.toLowerCase() === "evilborsch" &&
+        feed.repo?.toLowerCase() === "t3code"
+      );
+    }),
+  );
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
   const installRunningBackendsRef = yield* Ref.make<
     ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>
@@ -835,9 +847,10 @@ export const make = Effect.gen(function* () {
   );
 
   const baseUpdateState = (channel: DesktopUpdateChannel, disabledReason: Option.Option<string>) =>
-    Ref.get(notAppliedVersionRef).pipe(
-      Effect.map((notAppliedVersion) => ({
+    Effect.all([Ref.get(notAppliedVersionRef), usesForkFeed]).pipe(
+      Effect.map(([notAppliedVersion, isFork]) => ({
         ...createBaseUpdateState(channel, disabledReason, environment),
+        ...(isFork ? { source: "fork" as const } : {}),
         // Callers fall back to the channel's reason only when nothing else turns updates off.
         ...(Option.isSome(disabledReason) &&
         disabledReason.value === Option.getOrUndefined(channelBlockedReason(channel))
@@ -1354,13 +1367,14 @@ export const make = Effect.gen(function* () {
       }
 
       const settings = yield* desktopSettings.get;
+      const channel = (yield* usesForkFeed) ? "latest" : settings.updateChannel;
       const disabledReason = yield* resolveDisabledReason;
       // A blocked nightly channel still lets the user switch back to stable, so it stays updatable.
       yield* Ref.set(desktopState.canInstallUpdates, Option.isNone(disabledReason));
       yield* setState(
         yield* baseUpdateState(
-          settings.updateChannel,
-          Option.orElse(disabledReason, () => channelBlockedReason(settings.updateChannel)),
+          channel,
+          Option.orElse(disabledReason, () => channelBlockedReason(channel)),
         ),
       );
       if (Option.isSome(disabledReason)) {
@@ -1370,7 +1384,7 @@ export const make = Effect.gen(function* () {
 
       yield* electronUpdater.setAutoDownload(false);
       yield* electronUpdater.setAutoInstallOnAppQuit(false);
-      yield* applyAutoUpdaterChannel(settings.updateChannel);
+      yield* applyAutoUpdaterChannel(channel);
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
       );
@@ -1411,6 +1425,12 @@ export const make = Effect.gen(function* () {
       options?: { readonly minimumVersion?: string | undefined },
     ) {
       yield* Effect.annotateCurrentSpan({ channel: nextChannel });
+      if (nextChannel === "nightly" && (yield* usesForkFeed)) {
+        return yield* new DesktopUpdateChannelManagedError({
+          channel: nextChannel,
+          policyMessage: "This fork publishes updates on the Stable channel.",
+        });
+      }
       if (Option.isSome(channelBlockedReason(nextChannel))) {
         return yield* new DesktopUpdateChannelManagedError({
           channel: nextChannel,

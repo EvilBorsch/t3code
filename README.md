@@ -31,6 +31,8 @@ It works with Claude Code, Codex, Cursor, OpenCode, Grok Build, Antigravity, Kir
 
 This is a fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). It started as the home of **account usage limits** in the UI; upstream has since shipped its own Limits tab and `/usage-limits` command, and the fork now builds its always-visible usage UI on top of upstream's data.
 
+Install the desktop fork from [EvilBorsch/t3code Releases](https://github.com/EvilBorsch/t3code/releases/latest). In **Settings → About T3 Code**, choose **Update T3 from fork** to download a newer build from `main`, then confirm the restart. Linux updates use the AppImage or the `.deb` package. In-app updates on macOS require the installed and new builds to be signed by the same Apple Developer ID team.
+
 What the fork still carries on top of upstream:
 
 - **Always-visible usage limits** — rings next to the composer send button for the selected provider (session, weekly, model-scoped weekly), each hover showing spent and remaining percent with the reset time; the same numbers appear on every provider row and as a section in the provider editor. The context window ring next to them is always on; upstream's "legacy" opt-in toggle is gone. Web and desktop only.

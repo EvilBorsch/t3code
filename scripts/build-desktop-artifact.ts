@@ -64,6 +64,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
+const FORK_WINDOWS_APP_ID = "io.github.evilborsch.t3code";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -2797,6 +2798,15 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
   return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
+export const resolveWindowsDesktopProductName = Effect.fn("resolveWindowsDesktopProductName")(
+  function* (version: string) {
+    const publish = yield* resolveGitHubPublishConfig(resolveDesktopUpdateChannel(version));
+    return publish?.owner.toLowerCase() === "evilborsch" && publish.repo.toLowerCase() === "t3code"
+      ? "T3 Code (EvilBorsch)"
+      : resolveDesktopProductName(version);
+  },
+);
+
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
     ? "T3 Code (Nightly)"
@@ -2819,10 +2829,15 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
 ) {
-  const buildConfig: Record<string, unknown> = {
+  const productName =
+    platform === "win"
+      ? yield* resolveWindowsDesktopProductName(version)
+      : resolveDesktopProductName(version);
+  const forkWindows = platform === "win" && productName !== resolveDesktopProductName(version);
+  const buildConfig: Record<string, unknown> & { appId: string; productName: string } = {
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
-    appId: DESKTOP_APP_ID,
-    productName: resolveDesktopProductName(version),
+    appId: forkWindows ? FORK_WINDOWS_APP_ID : DESKTOP_APP_ID,
+    productName,
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     // runAsNode stays on: the app starts its server, helpers and the `t3` shim by running this
@@ -3967,8 +3982,24 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     options.platform === "win"
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
+  const build = yield* createBuildConfig(
+    options.platform,
+    options.target,
+    appVersion,
+    options.signed,
+    options.mockUpdates,
+    options.mockUpdateServerPort,
+    macPasskeySigning && macEntitlementsPath
+      ? {
+          entitlementsPath: macEntitlementsPath,
+          provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
+        }
+      : undefined,
+    bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
+    options.arch,
+  );
   const stagePackageJson: StagePackageJson = {
-    name: "t3code",
+    name: build.appId === FORK_WINDOWS_APP_ID ? "T3Code-EvilBorsch" : "t3code",
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
@@ -3982,22 +4013,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     homepage: "https://t3.codes",
     author: "T3 Tools",
     main: "apps/desktop/dist-electron/boot.cjs",
-    build: yield* createBuildConfig(
-      options.platform,
-      options.target,
-      appVersion,
-      options.signed,
-      options.mockUpdates,
-      options.mockUpdateServerPort,
-      macPasskeySigning && macEntitlementsPath
-        ? {
-            entitlementsPath: macEntitlementsPath,
-            provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
-          }
-        : undefined,
-      bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
-      options.arch,
-    ),
+    build,
     dependencies: stageDependencies,
     devDependencies: {
       electron: electronVersion,
@@ -4158,7 +4174,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   if (options.platform === "win") {
     yield* validateWindowsPackagedPayload({
       stageDistDir,
-      appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
+      appExecutableName: `${build.productName}.exe`,
       targetArch: options.arch,
       appVersion,
       expectWslRuntime: bundlesWslRuntime({
