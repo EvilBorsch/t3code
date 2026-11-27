@@ -42,12 +42,12 @@ it("resolves T3CODE_DESKTOP_BINARY first when executable", () => {
     platform: "darwin",
     homeDirectory: "/Users/test",
     env: { T3CODE_DESKTOP_BINARY: "/custom/t3-binary" },
-    isExecutable: (filePath) => filePath === "/custom/t3-binary",
+    isExecutable: (filePath) => filePath === NodePath.resolve("/custom/t3-binary"),
   });
   assert.deepStrictEqual(
     resolved,
     Option.some({
-      binaryPath: "/custom/t3-binary",
+      binaryPath: NodePath.resolve("/custom/t3-binary"),
       label: "T3CODE_DESKTOP_BINARY",
     }),
   );
@@ -84,7 +84,10 @@ it("includes macOS app bundle path for Nightly", () => {
     env: {},
   });
   assert.equal(candidates[0]?.label, "T3 Code (Nightly)");
-  assert.equal(candidates[0]?.appBundlePath, "/Applications/T3 Code (Nightly).app");
+  assert.equal(
+    candidates[0]?.appBundlePath,
+    NodePath.resolve("/Applications/T3 Code (Nightly).app"),
+  );
 });
 
 it("returns none when no candidates are executable", () => {

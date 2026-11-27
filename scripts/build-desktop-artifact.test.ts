@@ -542,7 +542,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",
-          owner: "pingdotgg",
+          owner: "EvilBorsch",
           repo: "t3code",
           releaseType: "release",
         },

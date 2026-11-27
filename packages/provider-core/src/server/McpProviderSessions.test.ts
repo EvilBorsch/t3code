@@ -143,7 +143,7 @@ describe("McpProviderSessions tool results", () => {
         providerInstanceId: ProviderInstanceId.make("codex"),
         endpoint: "http://127.0.0.1/mcp",
         authorizationHeader: "Bearer token",
-        browserToolsAvailable: false,
+        capabilities: new Set<string>(),
       });
       // A handler finishing for replaced session-1 must not populate session-2.
       yield* sessions.recordToolResult(
@@ -199,7 +199,7 @@ describe("McpProviderSessions approval requests", () => {
     providerInstanceId: ProviderInstanceId.make("codex"),
     endpoint: "http://127.0.0.1/mcp",
     authorizationHeader: "Bearer token",
-    browserToolsAvailable: false,
+    capabilities: new Set<string>(),
   });
 
   it.effect("keeps what a thread was asked until it is answered, per thread and message", () =>

@@ -1,12 +1,8 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
-  CLI_RELEASE_BASE_URL_ENV,
-  CLI_RELEASE_CHANNELS,
   cliReleaseIndexPageUrl,
   cliReleaseChannelOf,
   newestCliReleaseVersion,
-  releaseAssetUrl,
-  updateFeedFileName,
   type CliReleaseChannel,
 } from "@t3tools/shared/cliRelease";
 import * as Console from "effect/Console";
@@ -45,7 +41,7 @@ import {
 } from "../cloud/serviceProtocol.ts";
 import { runStagedServicePreflight } from "../cloud/servicePreflight.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
+import { managedUpdateRefusal } from "../policy/managedUpdates.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
@@ -105,47 +101,6 @@ export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(funct
     if (releases.length === 0) break;
   }
   return yield* new CliUpdateError({ reason: `No published ${channel} release was found.` });
-});
-
-/** The version an update mirror's feed file for this platform offers on `channel`. */
-export const resolveMirrorVersion = Effect.fn("cli.update.resolve_mirror")(function* (
-  mirror: { readonly organization: string; readonly feedUrl: string },
-  channel: CliReleaseChannel,
-) {
-  if (channel === "preview") {
-    return yield* new CliUpdateError({
-      reason: `${mirror.organization}'s update mirror has no preview builds.`,
-    });
-  }
-  const httpClient = yield* HttpClient.HttpClient;
-  const fileName = updateFeedFileName(
-    channel === "nightly" ? "nightly" : "latest",
-    yield* HostProcess.Platform,
-    yield* HostProcess.Architecture,
-  );
-  const url = releaseAssetUrl(mirror.feedUrl, fileName);
-  // Not the URL, whose query can hold the mirror's access token.
-  const unreadable = new CliUpdateError({
-    reason: `Could not read ${fileName} from ${mirror.organization}'s update mirror.`,
-  });
-  const body = yield* httpClient.get(url).pipe(
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap((response) => response.text),
-    Effect.mapError(() => unreadable),
-    Effect.timeoutOrElse({
-      duration: RELEASE_INDEX_TIMEOUT,
-      orElse: () => Effect.fail(unreadable),
-    }),
-  );
-  const version = /^version:\s*["']?([^"'\s]+)/m.exec(body)?.[1];
-  if (
-    version === undefined ||
-    !isExactServiceVersion(version) ||
-    cliReleaseChannelOf(version) !== channel
-  ) {
-    return yield* unreadable;
-  }
-  return version;
 });
 
 /**
@@ -247,10 +202,8 @@ export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(functio
 
 const updateFlags = {
   ...projectLocationFlags,
-  channel: Flag.Literals("channel", CLI_RELEASE_CHANNELS).pipe(
-    Flag.withDescription(
-      "Release channel to follow. Defaults to the channel this t3 was published on.",
-    ),
+  channel: Flag.Literals("channel", ["stable"] as const).pipe(
+    Flag.withDescription("The fork publishes releases from main on the stable channel."),
     Flag.optional,
   ),
   allowDowngrade: Flag.Boolean("allow-downgrade").pipe(
@@ -365,14 +318,19 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   const runner = yield* ProcessRunner.ProcessRunner;
   const platform = yield* HostProcess.Platform;
   const arch = yield* HostProcess.Architecture;
-  const environment = yield* HostProcess.Environment;
   const httpClient = yield* HttpClient.HttpClient;
   const service = yield* BootService.BootService;
   const policy = yield* ManagedPolicy.ManagedPolicy;
-  const mirror = managedUpdateMirror(policy.document);
 
   const currentVersion = packageJson.version;
-  const channel = input.channel ?? cliReleaseChannelOf(currentVersion);
+  const channel = "stable";
+  if (
+    (input.channel !== undefined && input.channel !== channel) ||
+    (input.requestedVersion !== undefined &&
+      cliReleaseChannelOf(input.requestedVersion) !== channel)
+  ) {
+    return yield* new CliUpdateError({ reason: "The fork only updates from its main releases." });
+  }
   const refusal = managedUpdateRefusal(
     policy.document,
     input.requestedVersion === undefined ? channel : cliReleaseChannelOf(input.requestedVersion),
@@ -390,36 +348,9 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   const targetVersion = yield* (
     input.requestedVersion !== undefined
       ? Effect.succeed(input.requestedVersion)
-      : mirror === undefined
-        ? resolveNewestVersion(channel)
-        : resolveMirrorVersion(mirror, channel)
+      : resolveNewestVersion(channel)
   ).pipe(Effect.ensuring(Effect.sync(progress.finish)));
   const targetChannel = cliReleaseChannelOf(targetVersion);
-
-  const currentChannel = cliReleaseChannelOf(currentVersion);
-  if (targetChannel === "preview" && currentChannel !== "preview") {
-    yield* Console.log(
-      [
-        `t3@${targetVersion} is a preview build.`,
-        "  Preview builds are cut by maintainers from unreleased branches to exercise the release",
-        "  pipeline. They can be broken, receive no fixes, and are never offered as updates; you",
-        `  will have to switch back to ${currentChannel} yourself with \`t3 update --channel ${currentChannel} --allow-downgrade\`.`,
-      ].join("\n"),
-    );
-    if (!(process.stdin.isTTY && process.stdout.isTTY)) {
-      return yield* new CliUpdateError({
-        reason:
-          "Refusing to install a preview build without confirmation. Run this from a terminal to confirm, or pass --channel preview from an interactive shell.",
-      });
-    }
-    const confirmed = yield* Prompt.run(
-      Prompt.Confirm({ message: "Install the preview build anyway?", initial: false }),
-    ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) }));
-    if (!confirmed) {
-      yield* Console.log("Left as is.");
-      return;
-    }
-  }
 
   const status = yield* service.status;
   // Service names are per user, so another home's unit belongs to a different install.
@@ -505,8 +436,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     httpClient,
     platform,
     arch,
-    releaseBaseUrl: mirror?.feedUrl ?? (environment[CLI_RELEASE_BASE_URL_ENV]?.trim() || undefined),
-    requirePublishedRelease: mirror !== undefined,
+    requirePublishedRelease: true,
     validate: (runtime) =>
       runStagedServicePreflight({
         runner,
@@ -541,10 +471,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     Effect.catchIf(isUnpublishedRelease, () =>
       Effect.fail(
         new CliUpdateError({
-          reason:
-            mirror === undefined
-              ? `No release archive was published for t3@${targetVersion}.`
-              : `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`,
+          reason: `The fork has no release archive for t3@${targetVersion} on this machine.`,
         }),
       ),
     ),

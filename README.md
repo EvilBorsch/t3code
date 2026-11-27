@@ -9,7 +9,7 @@
 <p align="center">The open-source control plane for coding agents.</p>
 
 <p align="center">
-  <a href="https://t3.codes/download"><strong>Download</strong></a> ·
+  <a href="https://github.com/EvilBorsch/t3code/releases/latest"><strong>Download</strong></a> ·
   <a href="https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824">iOS</a> ·
   <a href="https://play.google.com/store/apps/details?id=com.t3tools.t3code">Android</a> ·
   <a href="https://app.t3.codes">Web</a> ·
@@ -31,7 +31,7 @@ It works with Claude Code, Codex, Cursor, OpenCode, Grok Build, Antigravity, Kir
 
 This is a fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). It started as the home of **account usage limits** in the UI; upstream has since shipped its own Limits tab and `/usage-limits` command, and the fork now builds its always-visible usage UI on top of upstream's data.
 
-Install the desktop fork from [EvilBorsch/t3code Releases](https://github.com/EvilBorsch/t3code/releases/latest). In **Settings → About T3 Code**, choose **Update T3 from fork** to download a newer build from `main`, then confirm the restart. Linux updates use the AppImage or the `.deb` package. In-app updates on macOS require the installed and new builds to be signed by the same Apple Developer ID team.
+Install the desktop fork from [EvilBorsch/t3code Releases](https://github.com/EvilBorsch/t3code/releases/latest). In **Settings → About T3 Code**, choose **Update T3 from fork** to download a newer build from `main`, then confirm the restart. The desktop app and `t3 update` use the fork’s published releases from `main`. Linux updates use the AppImage or the `.deb` package. In-app updates on macOS require the installed and new builds to be signed by the same Apple Developer ID team.
 
 What the fork still carries on top of upstream:
 
@@ -63,31 +63,11 @@ What the fork still carries on top of upstream:
 
 ### Desktop app
 
-[Download T3 Code](https://t3.codes/download) for macOS, Windows, or Linux. You can also use a package manager:
-
-| Platform       | Command                                                              |
-| -------------- | -------------------------------------------------------------------- |
-| macOS          | `brew install --cask t3-code`                                        |
-| Windows        | `winget install T3Tools.T3Code` or `scoop install extras/t3code`     |
-| Arch Linux     | `yay -S t3code-bin`                                                  |
-| Nix            | `nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code`         |
-| Debian, Ubuntu | `.deb` from [Releases](https://github.com/pingdotgg/t3code/releases) |
+Download the Windows installer, macOS disk image, Linux AppImage, or `.deb` from the [fork releases](https://github.com/EvilBorsch/t3code/releases/latest).
 
 ### Command line
 
-This installs the `t3` command. Run `t3` to start the server and open the web app.
-
-```bash
-curl -fsSL https://t3.codes/install.sh | sh
-```
-
-On Windows, in PowerShell:
-
-```powershell
-irm https://t3.codes/install.ps1 | iex
-```
-
-To try it once without an install, run `npx t3@latest`.
+Use the `t3` command bundled with the desktop app, or download the matching CLI archive from the same release. Run `t3` to start the server and open the web app. Run `t3 update` to install the newest CLI release from the fork.
 
 ### Phone
 

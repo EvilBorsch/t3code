@@ -180,6 +180,7 @@ it.layer(layerTest)("external Antigravity runtime health", (it) => {
           providerSessionId,
           providerInstanceId: h.instance.instanceId,
           endpoint: "http://127.0.0.1:43126/mcp",
+          capabilities: new Set(),
           authorizationHeader: "Bearer fixture",
         });
         const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({

@@ -11,7 +11,7 @@ export function formatAppDisplayName(input: {
   return `${input.baseName} (${input.stageLabel})`;
 }
 
-export function resolveHostedAppChannelLabel(channel: string | null | undefined): string | null {
+function resolveHostedAppChannelLabel(channel: string | null | undefined): string | null {
   const normalized = channel?.trim().toLowerCase();
   // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel name, part of the product name
   return normalized === "nightly" ? "Nightly" : normalized === "latest" ? "Latest" : null;

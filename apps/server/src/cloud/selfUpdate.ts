@@ -8,7 +8,6 @@ import {
   type ServerSelfUpdateResult,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -20,11 +19,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 
-import {
-  CLI_RELEASE_BASE_URL_ENV,
-  cliReleaseChannelOf,
-  crossesReleaseTrack,
-} from "@t3tools/shared/cliRelease";
+import { cliReleaseChannelOf, crossesReleaseTrack } from "@t3tools/shared/cliRelease";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
@@ -32,11 +27,10 @@ import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import * as DesktopUpdateMarker from "../desktopUpdate/DesktopUpdateMarker.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-import { managedUpdateMirror, managedUpdateRefusal } from "../policy/managedUpdates.ts";
+import { managedUpdateRefusal } from "../policy/managedUpdates.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
-  isUnpublishedRelease,
   pinnedRuntimePaths,
   prunePinnedRuntimes,
 } from "./pinnedRuntime.ts";
@@ -144,10 +138,6 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const platform = yield* HostProcess.Platform;
   const arch = yield* HostProcess.Architecture;
   const httpClient = yield* HttpClient.HttpClient;
-  const mirror = managedUpdateMirror(policy.document);
-  const releaseBaseUrl =
-    mirror?.feedUrl ??
-    Option.getOrUndefined(yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option));
   const inFlight = yield* Ref.make(false);
 
   yield* pruneRuntimesOnStart({ baseDir: serverConfig.baseDir, managed: launcher.managed }).pipe(
@@ -172,6 +162,13 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const update: ServerSelfUpdate["Service"]["update"] = Effect.fn(
     "cloud.server_self_update.update",
   )(function* (input, reportProgress = () => Effect.void, onHandoffAccepted = () => Effect.void) {
+    if (
+      input.channel === "nightly" ||
+      (capability === "boot-service" &&
+        cliReleaseChannelOf(input.targetVersion.trim()) !== "stable")
+    ) {
+      return yield* failWith("The fork only updates from its main releases.");
+    }
     const policyRefusal = managedUpdateRefusal(
       policy.document,
       capability === "boot-service" ? cliReleaseChannelOf(input.targetVersion.trim()) : undefined,
@@ -223,8 +220,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         httpClient,
         platform,
         arch,
-        releaseBaseUrl,
-        requirePublishedRelease: mirror !== undefined,
+        requirePublishedRelease: true,
         validate: (runtime) =>
           runStagedServicePreflight({
             runner,
@@ -237,12 +233,6 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         Effect.mapError((error) => {
           if (error._tag === "PinnedRuntimePreflightBlockedError") {
             return failWith(error.reason, error);
-          }
-          if (mirror !== undefined && isUnpublishedRelease(error)) {
-            return failWith(
-              `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`,
-              error,
-            );
           }
           const downloadFailure = [
             error.httpStatus === undefined ? undefined : `HTTP ${error.httpStatus}`,

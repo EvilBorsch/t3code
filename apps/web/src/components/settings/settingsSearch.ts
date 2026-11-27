@@ -1,4 +1,3 @@
-import { HOSTED_APP_CHANNEL } from "~/branding";
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
@@ -60,7 +59,6 @@ export interface SettingsSearchItem {
   readonly desktopOnly?: boolean;
   readonly macOnly?: boolean;
   readonly windowsOnly?: boolean;
-  readonly releaseChannelOnly?: boolean;
   readonly secretProvidersOnly?: boolean;
   readonly cloudOnly?: boolean;
   readonly environmentOnly?: boolean;
@@ -973,13 +971,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("about check for updates download install upgrade release")],
   },
   {
-    id: "update-track",
-    title: msg("Update track"),
-    to: "/settings/about",
-    searchTerms: [msg("release channel stable latest nightly prerelease")],
-    releaseChannelOnly: true,
-  },
-  {
     id: "cli-command",
     title: msg("t3 command"),
     to: "/settings/about",
@@ -1733,7 +1724,6 @@ export function settingsForThisPlatform(
   return items.filter(
     (item) =>
       (isElectron || item.desktopOnly !== true) &&
-      (!item.releaseChannelOnly || isElectron || HOSTED_APP_CHANNEL !== null) &&
       (!item.macOnly || isMacPlatform(platform)) &&
       (!item.windowsOnly || isWindowsPlatform(platform)),
   );

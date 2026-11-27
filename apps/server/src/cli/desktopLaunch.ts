@@ -8,6 +8,7 @@ import {
   writePendingDesktopOpenWorkspace,
 } from "@t3tools/shared/desktopOpenArgs";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { CLI_RELEASES_PAGE_URL } from "@t3tools/shared/cliRelease";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -22,8 +23,7 @@ export class DesktopAppNotFoundError extends Schema.TaggedError<DesktopAppNotFou
   override get message(): string {
     return [
       "T3 Code desktop app was not found.",
-      "Install it from https://github.com/pingdotgg/t3code/releases or with `brew install --cask t3-code`,",
-      "or set T3CODE_DESKTOP_BINARY to the app executable.",
+      `Install it from ${CLI_RELEASES_PAGE_URL} or set T3CODE_DESKTOP_BINARY to the app executable.`,
       ...(this.searchedPaths.length > 0
         ? [`Looked in: ${this.searchedPaths.slice(0, 8).join(", ")}`]
         : []),

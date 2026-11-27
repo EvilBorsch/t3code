@@ -43,7 +43,7 @@ import {
   normalizeDesktopUpdateReleaseNotes,
   releaseNotesOfOfferedVersion,
 } from "./releaseNotes.ts";
-import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
+import { FORK_RELEASE_REPOSITORY, desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   createInitialDesktopUpdateState,
@@ -396,22 +396,9 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const policy = yield* DesktopUpdatePolicy.DesktopUpdatePolicy;
-  // Any user can set the mock flag, so it never replaces an administrator's update source.
-  const mockUpdates = config.mockUpdates && policy.message === null;
+  const updateFeedKind = yield* Ref.make<"fork" | "mock" | "none">("none");
+  const usesForkFeed = Ref.get(updateFeedKind).pipe(Effect.map((kind) => kind === "fork"));
 
-  const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
-  const usesForkFeed = Ref.get(appUpdateYmlConfigRef).pipe(
-    Effect.map((config) => {
-      const feed = Option.getOrUndefined(config);
-      return (
-        !mockUpdates &&
-        policy.feedUrl === undefined &&
-        feed?.provider === "github" &&
-        feed.owner?.toLowerCase() === "evilborsch" &&
-        feed.repo?.toLowerCase() === "t3code"
-      );
-    }),
-  );
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
   const installRunningBackendsRef = yield* Ref.make<
     ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>
@@ -432,7 +419,8 @@ export const make = Effect.gen(function* () {
           desktopUpdateChannelOf(version) === state.channel &&
           (Option.isSome(floor)
             ? compareSemverVersions(version, floor.value) >= 0
-            : desktopUpdateChannelOf(environment.appVersion) === state.channel),
+            : state.source === "fork" ||
+              desktopUpdateChannelOf(environment.appVersion) === state.channel),
       ),
     );
   const updateStateRef = yield* Ref.make<DesktopUpdateState>(
@@ -489,15 +477,8 @@ export const make = Effect.gen(function* () {
           )
       : false;
 
-  const hasUpdateFeedConfig = Ref.get(appUpdateYmlConfigRef).pipe(
-    Effect.map(
-      (appUpdateYmlConfig) =>
-        Option.isSome(appUpdateYmlConfig) || mockUpdates || policy.feedUrl !== undefined,
-    ),
-  );
-
   const resolveDisabledReason = Effect.gen(function* () {
-    const hasFeedConfig = yield* hasUpdateFeedConfig;
+    const hasFeedConfig = (yield* Ref.get(updateFeedKind)) !== "none";
     return Option.fromNullishOr(
       getAutoUpdateDisabledReason({
         policy,
@@ -526,7 +507,7 @@ export const make = Effect.gen(function* () {
   const noOfferState = (state: DesktopUpdateState, checkedAt: string) =>
     Effect.map(Ref.get(releaseFloorRef), (floor) => {
       const buildChannel = desktopUpdateChannelOf(environment.appVersion);
-      if (Option.isSome(floor) || buildChannel === state.channel) {
+      if (state.source === "fork" || Option.isSome(floor) || buildChannel === state.channel) {
         return reduceDesktopUpdateStateOnNoUpdate(state, checkedAt);
       }
       const blocked = channelBlockedReason(buildChannel);
@@ -1342,7 +1323,14 @@ export const make = Effect.gen(function* () {
       };
 
       const appUpdateYmlConfig = yield* readAppUpdateYml;
-      yield* Ref.set(appUpdateYmlConfigRef, appUpdateYmlConfig);
+      const packagedFeed = Option.getOrUndefined(appUpdateYmlConfig);
+      const feedKind =
+        config.mockUpdates && policy.message === null && packagedFeed?.provider !== "github"
+          ? "mock"
+          : packagedFeed === undefined
+            ? "none"
+            : "fork";
+      yield* Ref.set(updateFeedKind, feedKind);
 
       const notAppliedVersion = yield* readNotAppliedInstallVersion;
       yield* Ref.set(notAppliedVersionRef, notAppliedVersion);
@@ -1353,21 +1341,21 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      if (mockUpdates) {
+      if (feedKind === "mock") {
         yield* electronUpdater.setFeedURL({
           provider: "generic",
           url: `http://localhost:${config.mockUpdateServerPort}`,
         } as ElectronUpdater.ElectronUpdaterFeedUrl);
-      } else if (policy.feedUrl !== undefined) {
-        // The administrator's mirror replaces the GitHub feed baked into app-update.yml.
+      } else if (feedKind === "fork") {
         yield* electronUpdater.setFeedURL({
-          provider: "generic",
-          url: policy.feedUrl,
-        } as ElectronUpdater.ElectronUpdaterFeedUrl);
+          provider: "github",
+          ...FORK_RELEASE_REPOSITORY,
+          releaseType: "release",
+        });
       }
 
       const settings = yield* desktopSettings.get;
-      const channel = (yield* usesForkFeed) ? "latest" : settings.updateChannel;
+      const channel = feedKind === "fork" ? "latest" : settings.updateChannel;
       const disabledReason = yield* resolveDisabledReason;
       // A blocked nightly channel still lets the user switch back to stable, so it stays updatable.
       yield* Ref.set(desktopState.canInstallUpdates, Option.isNone(disabledReason));

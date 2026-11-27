@@ -15,6 +15,7 @@ import {
   type DirectoryRecord,
 } from "@electron/asar";
 
+import { FORK_RELEASE_REPOSITORY } from "@t3tools/shared/cliRelease";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
@@ -2729,32 +2730,6 @@ export function resolveDesktopRuntimeDependencies(
   );
 }
 
-export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
-  updateChannel: "latest" | "nightly",
-) {
-  const env = yield* Config.all({
-    updateRepository: Config.String("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
-    githubRepository: Config.String("GITHUB_REPOSITORY").pipe(Config.option),
-  });
-  const rawRepo = (
-    Option.getOrUndefined(env.updateRepository)?.trim() ||
-    Option.getOrUndefined(env.githubRepository)?.trim() ||
-    ""
-  ).trim();
-  if (!rawRepo) return undefined;
-
-  const [owner, repo, ...rest] = rawRepo.split("/");
-  if (!owner || !repo || rest.length > 0) return undefined;
-
-  return {
-    provider: "github",
-    owner,
-    repo,
-    releaseType: updateChannel === "nightly" ? "prerelease" : "release",
-    ...(updateChannel === "nightly" ? { channel: "nightly" as const } : {}),
-  };
-});
-
 export function resolveDesktopUpdateChannel(version: string): "latest" | "nightly" {
   return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
 }
@@ -2798,14 +2773,11 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
   return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
-export const resolveWindowsDesktopProductName = Effect.fn("resolveWindowsDesktopProductName")(
-  function* (version: string) {
-    const publish = yield* resolveGitHubPublishConfig(resolveDesktopUpdateChannel(version));
-    return publish?.owner.toLowerCase() === "evilborsch" && publish.repo.toLowerCase() === "t3code"
-      ? "T3 Code (EvilBorsch)"
-      : resolveDesktopProductName(version);
-  },
-);
+export function resolveWindowsDesktopProductName(version: string): string {
+  return isDesktopPreviewVersion(version)
+    ? resolveDesktopProductName(version)
+    : "T3 Code (EvilBorsch)";
+}
 
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
@@ -2831,7 +2803,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 ) {
   const productName =
     platform === "win"
-      ? yield* resolveWindowsDesktopProductName(version)
+      ? resolveWindowsDesktopProductName(version)
       : resolveDesktopProductName(version);
   const forkWindows = platform === "win" && productName !== resolveDesktopProductName(version);
   const buildConfig: Record<string, unknown> & { appId: string; productName: string } = {
@@ -2872,21 +2844,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
-  // Missing publish config infers a GitHub feed from tokens; staging has no repository, so manifest generation would crash.
-  buildConfig.publish = null;
-  if (!isDesktopPreviewVersion(version)) {
-    const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
-    if (publishConfig) {
-      buildConfig.publish = [publishConfig];
-    } else if (mockUpdates) {
-      buildConfig.publish = [
-        {
-          provider: "generic",
-          url: resolveMockUpdateServerUrl(mockUpdateServerPort),
-        },
-      ];
-    }
-  }
+  buildConfig.publish = isDesktopPreviewVersion(version)
+    ? null
+    : mockUpdates
+      ? [{ provider: "generic", url: resolveMockUpdateServerUrl(mockUpdateServerPort) }]
+      : [{ provider: "github", ...FORK_RELEASE_REPOSITORY, releaseType: "release" }];
 
   if (platform === "mac") {
     const path = yield* Path.Path;

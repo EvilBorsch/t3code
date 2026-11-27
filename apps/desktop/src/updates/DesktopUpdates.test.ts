@@ -93,9 +93,14 @@ const nextPublishedState = (emit: () => void) =>
 describe("DesktopUpdates", () => {
   it.effect("offers updates from the fork even when Nightly was previously selected", () => {
     const harness = makeHarness({
-      appUpdateYml: "provider: github\nowner: EvilBorsch\nrepo: t3code\n",
-      env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+      appUpdateYml: "provider: github\nowner: pingdotgg\nrepo: t3code\n",
+      env: { T3CODE_DESKTOP_MOCK_UPDATES: "true" },
+      policy: {
+        ...DesktopUpdatePolicy.unmanagedUpdatePolicy,
+        feedUrl: "https://mirror.example/updates",
+      },
       platform: "win32",
+      appVersion: "1.2.3-nightly.20261028.1",
       savedChannel: "nightly",
     });
 
@@ -105,9 +110,14 @@ describe("DesktopUpdates", () => {
         yield* updates.configure;
 
         const state = yield* updates.getState;
-        assert.equal(state.source, "fork");
+        assert.equal((yield* encodeUpdateState(state)).source, "fork");
         assert.equal(state.channel, "latest");
         assert.isTrue(state.enabled);
+        assert.deepStrictEqual(harness.feedUrls(), [
+          { provider: "github", owner: "EvilBorsch", repo: "t3code", releaseType: "release" },
+        ]);
+        assert.isTrue(Option.isSome(yield* Effect.option(updates.setChannel("latest"))));
+        assert.isTrue(Option.isNone(yield* Effect.option(updates.setChannel("nightly"))));
 
         const offer = yield* nextPublishedState(() =>
           harness.emit("update-available", { version: "1.2.4" }),
@@ -1470,7 +1480,7 @@ describe("DesktopUpdates under a managed policy", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("updates from the administrator's feed", () => {
+  it.effect("keeps updates disabled without a packaged feed even if a mirror is configured", () => {
     const harness = makeHarness({
       // Any user can set the mock flag; it must not redirect a managed feed.
       env: { T3CODE_DESKTOP_MOCK_UPDATES: "true" },
@@ -1481,10 +1491,8 @@ describe("DesktopUpdates under a managed policy", () => {
       Effect.gen(function* () {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
-        assert.equal((yield* updates.getState).status, "idle");
-        assert.deepEqual(harness.feedUrls(), [
-          { provider: "generic", url: "https://updates.example.com/t3code" },
-        ]);
+        assert.equal((yield* updates.getState).status, "disabled");
+        assert.deepEqual(harness.feedUrls(), []);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -1499,28 +1507,6 @@ describe("DesktopUpdates under a managed policy", () => {
         const error = yield* updates.setChannel("nightly").pipe(Effect.flip);
         assert.equal(error._tag, "DesktopUpdateChannelManagedError");
         assert.equal((yield* updates.getState).channel, "latest");
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
-  it.effect("does not name a blocked build track as the one to switch back to", () => {
-    const harness = makeHarness({
-      appVersion: "1.2.4-nightly.20261027.1",
-      savedChannel: "latest",
-      policy: managed({ allowNightly: false, feedUrl: "https://updates.example.com/t3code" }),
-    });
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        yield* updates.check("startup");
-        const state = yield* nextPublishedState(() => harness.emit("update-not-available"));
-
-        assert.equal(state.channel, "latest");
-        assert.equal(state.status, "error");
-        assert.equal(state.errorContext, "check");
-        assert.isUndefined(state.trackMismatch);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -1543,34 +1529,23 @@ describe("DesktopUpdates under a managed policy", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("holds a nightly install until its user switches to stable", () => {
+  it.effect("keeps fork releases disabled when the administrator blocks updates", () => {
     const harness = makeHarness({
-      appVersion: "1.2.3-nightly.20261028.1",
-      // A managed app ignores the mock feed, so give it a real one.
-      policy: managed({ allowNightly: false, feedUrl: "https://updates.example.com/t3code" }),
+      appUpdateYml: "provider: github\nowner: EvilBorsch\nrepo: t3code\n",
+      policy: managed({ mode: "off" }),
     });
 
     return Effect.scoped(
       Effect.gen(function* () {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
-        yield* TestClock.adjust("10 minutes");
-
-        const held = yield* updates.getState;
-        assert.equal(held.channel, "nightly");
-        assert.equal(held.status, "disabled");
-        assert.include(held.message ?? "", message);
-        assert.isTrue(held.channelBlockedByPolicy);
-        assert.isTrue((yield* encodeUpdateState(held)).channelBlockedByPolicy);
+        const state = yield* updates.getState;
+        assert.equal(state.source, "fork");
+        assert.equal(state.status, "disabled");
+        assert.equal(state.message, message);
         assert.isFalse((yield* updates.check("menu")).checked);
         assert.equal(harness.checkCount(), 0);
-
-        const stable = yield* updates.setChannel("latest");
-        assert.equal(stable.channel, "latest");
-        assert.isTrue(stable.enabled);
-        assert.isUndefined(stable.channelBlockedByPolicy);
-        assert.equal(harness.checkCount(), 1);
       }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    ).pipe(Effect.provide(harness.layer));
   });
 });

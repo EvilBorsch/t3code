@@ -415,20 +415,6 @@ export function collectChannelSwitchTargets(
   return { targets, skipped };
 }
 
-/** A remote host on the other track that a switch can still move, for retrying a partial switch. */
-export function awaitsTrackSwitch(
-  machine: Pick<UpdateEverythingMachine, "serverConfig" | "hostedByThisApp">,
-  channel: DesktopUpdateChannel,
-): boolean {
-  const config = machine.serverConfig;
-  return (
-    !machine.hostedByThisApp &&
-    config !== null &&
-    !isOnTrack(config.environment.serverVersion, channel) &&
-    !("skip" in trackSwitchMove(config, false, m))
-  );
-}
-
 function isOnTrack(version: string, channel: DesktopUpdateChannel): boolean {
   return cliReleaseChannelOf(version) !== "preview" && desktopUpdateChannelOf(version) === channel;
 }

@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { ManagedUpdatesPolicy } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { cliArchiveFileName, cliReleaseAssetUrl } from "@t3tools/shared/cliRelease";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -28,12 +29,7 @@ import {
 } from "../cloud/pinnedRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import {
-  repointLauncher,
-  resolveMirrorVersion,
-  resolveNewestVersion,
-  runUpdate,
-} from "./update.ts";
+import { repointLauncher, resolveNewestVersion, runUpdate } from "./update.ts";
 
 // lsof listing one process, so prune sees a process list in which no runtime is running.
 const unrelatedLsof = ProcessRunner.ProcessRunner.of({
@@ -58,7 +54,7 @@ it.effect("authenticates each release page until the requested channel is found"
     const httpClient = HttpClient.make((request) => {
       const url = new URL(request.url);
       assert.equal(url.origin, "https://api.github.com");
-      assert.equal(url.pathname, "/repos/pingdotgg/t3code/releases");
+      assert.equal(url.pathname, "/repos/EvilBorsch/t3code/releases");
       assert.equal(request.headers.accept, "application/vnd.github+json");
       assert.equal(request.headers.authorization, "Bearer gh-token");
       const page = url.searchParams.get("page") ?? "";
@@ -72,54 +68,6 @@ it.effect("authenticates each release page until the requested channel is found"
     );
     assert.equal(version, "1.2.3");
     assert.deepStrictEqual(pages, ["1", "2"]);
-  }),
-);
-
-it.effect("reads the newest version from the update feed file a mirror publishes", () =>
-  Effect.gen(function* () {
-    const requested: string[] = [];
-    const mirror = {
-      organization: "Example Corp",
-      feedUrl: "https://updates.example.com/t3code/?token=abc",
-    };
-    const resolve = (
-      channel: "stable" | "nightly" | "preview",
-      platform: NodeJS.Platform,
-      arch: string,
-      feed: string,
-    ) =>
-      resolveMirrorVersion(mirror, channel).pipe(
-        Effect.map((version): string => version),
-        Effect.catchTags({ CliUpdateError: (error) => Effect.succeed(`error: ${error.reason}`) }),
-        Effect.provideService(HostProcess.Platform, platform),
-        Effect.provideService(HostProcess.Architecture, arch),
-        Effect.provideService(
-          HttpClient.HttpClient,
-          HttpClient.make((request) => {
-            requested.push(request.url);
-            return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(feed)));
-          }),
-        ),
-      );
-
-    assert.equal(
-      yield* resolve("stable", "darwin", "arm64", "version: 1.4.0\nfiles: []\n"),
-      "1.4.0",
-    );
-    assert.equal(
-      yield* resolve("nightly", "linux", "arm64", "version: '1.5.0-nightly.20261101.2'\n"),
-      "1.5.0-nightly.20261101.2",
-    );
-    assert.deepStrictEqual(requested, [
-      "https://updates.example.com/t3code/latest-mac.yml?token=abc",
-      "https://updates.example.com/t3code/nightly-linux-arm64.yml?token=abc",
-    ]);
-    // A feed for the wrong track is not trusted to mean the requested one.
-    assert.include(
-      yield* resolve("stable", "win32", "x64", "version: 1.5.0-nightly.20261101.2\n"),
-      "Could not read latest.yml from Example Corp's update mirror.",
-    );
-    assert.include(yield* resolve("preview", "win32", "x64", ""), "has no preview builds");
   }),
 );
 
@@ -162,40 +110,34 @@ it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
     }),
   );
 
-  it.effect("refuses nightly releases when the policy disallows them", () =>
+  it.effect("refuses nightly releases even when the policy allows them", () =>
     Effect.gen(function* () {
-      const byChannel = yield* runWithPolicy(
-        { mode: "auto", allowNightly: false },
-        { channel: "nightly" },
-      );
+      const byChannel = yield* runWithPolicy({ mode: "auto" }, { channel: "nightly" });
       const byVersion = yield* runWithPolicy(
-        { mode: "auto", allowNightly: false },
+        { mode: "auto" },
         { channel: "stable", requestedVersion: "1.2.0-nightly.20261028.1" },
       );
       for (const error of [byChannel, byVersion]) {
-        assert.equal(
-          error.message,
-          "Example Corp manages T3 Code updates. Only stable releases can be installed.",
-        );
+        assert.equal(error.message, "The fork only updates from its main releases.");
       }
     }),
   );
 
-  it.effect("looks for updates on the policy's mirror, never the public releases", () =>
+  it.effect("uses the fork release index even with a managed mirror configured", () =>
     Effect.gen(function* () {
       const requested: string[] = [];
       const error = yield* runWithPolicy(
         { mode: "auto", feedUrl: "https://updates.example.com/t3code" },
         { channel: "stable" },
         HttpClient.make((request) => {
-          requested.push(new URL(request.url).origin);
+          requested.push(new URL(request.url).pathname);
           return Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response("", { status: 404 })),
           );
         }),
       );
-      assert.include(error.message, "from Example Corp's update mirror");
-      assert.deepStrictEqual(requested, ["https://updates.example.com"]);
+      assert.equal(error.message, "Could not list t3 releases.");
+      assert.deepStrictEqual(requested, ["/repos/EvilBorsch/t3code/releases"]);
     }),
   );
 });
@@ -626,7 +568,13 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
             ManagedPolicy.layerTest(),
             Layer.succeed(
               HttpClient.HttpClient,
-              HttpClient.make(() => Effect.die("unexpected release lookup")),
+              HttpClient.make((request) => {
+                assert.equal(request.url, cliReleaseAssetUrl(version, "SHA256SUMS"));
+                const file = cliArchiveFileName(version, "linux-x64");
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response(`${"a".repeat(64)}  ${file}\n`)),
+                );
+              }),
             ),
             Layer.fresh(TestConsole.layer),
           ),
@@ -749,7 +697,13 @@ it.layer(NodeServices.layer)("t3 update checks the database before switching", (
             ManagedPolicy.layerTest(),
             Layer.succeed(
               HttpClient.HttpClient,
-              HttpClient.make(() => Effect.die("unexpected release lookup")),
+              HttpClient.make((request) => {
+                assert.equal(request.url, cliReleaseAssetUrl(targetVersion, "SHA256SUMS"));
+                const file = cliArchiveFileName(targetVersion, "linux-x64");
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response(`${"a".repeat(64)}  ${file}\n`)),
+                );
+              }),
             ),
             Layer.fresh(TestConsole.layer),
           ),
