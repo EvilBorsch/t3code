@@ -265,8 +265,7 @@ function AboutVersionSection() {
   const statusLabel: Record<string, string> = {
     checking: gt("Checking…"),
     downloading: gt("Downloading…"),
-    // Off its track, "up to date" only means no switch is pending; Review moves it.
-    ...(appOffTrack ? {} : { "up-to-date": gt("Up to Date") }),
+    "up-to-date": gt("Up to Date"),
   };
   const buttonLabel =
     usesForkFeed &&
