@@ -68,7 +68,7 @@ jobs:
             }
           - {
               label: macOS x64,
-              runner: macos-15-intel,
+              runner: macos-26-intel,
               platform: mac,
               target: dmg,
               arch: x64,
